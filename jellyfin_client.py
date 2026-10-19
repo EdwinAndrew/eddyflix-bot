@@ -7,8 +7,10 @@ class JellyfinClient:
     def __init__(self, base_url: str, api_key: str):
         self.base_url = base_url.rstrip('/')
         self.api_key = api_key
+        # Jellyfin 12 only accepts the Authorization header. The legacy
+        # X-MediaBrowser-Token / X-Emby-Token headers and ?api_key= get a 401.
         self.headers = {
-            "X-MediaBrowser-Token": api_key
+            "Authorization": f'MediaBrowser Token="{api_key}"'
         }
         self._session: aiohttp.ClientSession | None = None
         self._session_lock = asyncio.Lock()
