@@ -20,7 +20,8 @@ USER botuser
 
 # The bot has no HTTP endpoint, so health is judged by the heartbeat file it
 # rewrites every 30s. Restart-on-exit alone would not catch a process that is
-# alive but disconnected from Discord.
+# alive but disconnected from Discord. The bot also stops writing it after five
+# minutes without a successful authenticated Jellyfin call.
 HEALTHCHECK --interval=60s --timeout=10s --start-period=90s --retries=3 \
     CMD python -c "import os,sys,time; sys.exit(0 if os.path.exists('/tmp/bot_heartbeat') and time.time()-os.path.getmtime('/tmp/bot_heartbeat') < 120 else 1)"
 

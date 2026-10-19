@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import aiohttp
 from typing import Dict, List
@@ -14,6 +15,10 @@ class JellyfinClient:
         }
         self._session: aiohttp.ClientSession | None = None
         self._session_lock = asyncio.Lock()
+        # Monotonic time of the last authenticated call that succeeded, read by
+        # the bot's heartbeat. Starts at construction so a fresh start gets the
+        # same grace period as a running bot.
+        self.last_auth_success = time.monotonic()
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Return a shared session, creating it on first use.
@@ -37,6 +42,9 @@ class JellyfinClient:
             await self._session.close()
         self._session = None
 
+    def seconds_since_auth_success(self) -> float:
+        return time.monotonic() - self.last_auth_success
+
     async def _get(self, endpoint: str) -> dict:
         """Make GET request to Jellyfin API"""
         url = f"{self.base_url}{endpoint}"
@@ -44,7 +52,12 @@ class JellyfinClient:
         async with session.get(url) as resp:
             if resp.status != 200:
                 raise Exception(f"API request failed: {resp.status}")
-            return await resp.json()
+            data = await resp.json()
+            # /System/Info/Public answers without a key, so it proves nothing
+            # about authentication.
+            if "/Public" not in endpoint:
+                self.last_auth_success = time.monotonic()
+            return data
 
     async def get_server_info(self) -> dict:
         """Get server information"""

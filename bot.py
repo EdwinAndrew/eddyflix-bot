@@ -71,6 +71,8 @@ class MediaServerBot(commands.Bot):
         """Release the shared Jellyfin HTTP session before shutting down."""
         if jf is not None:
             await jf.close()
+        if push_session is not None and not push_session.closed:
+            await push_session.close()
         await super().close()
 
 
@@ -696,6 +698,30 @@ async def update_dashboard():
         print(f"Error updating dashboard: {e}")
 
 HEARTBEAT_FILE = "/tmp/bot_heartbeat"
+# How long authenticated Jellyfin calls may keep failing before the heartbeat
+# stops. Long enough to ride out a Jellyfin restart for an update.
+JELLYFIN_STALE_SECONDS = 300
+jellyfin_stale_reported = False
+# Uptime Kuma has no Docker socket, so it cannot see the container's health
+# status. Each good heartbeat also hits a Kuma Push monitor, which alerts when
+# the pushes stop. Optional: empty means file only.
+UPTIME_KUMA_PUSH_URL = os.getenv("UPTIME_KUMA_PUSH_URL", "")
+# Its own session: the Jellyfin client's carries the API key in its headers.
+push_session: aiohttp.ClientSession | None = None
+
+
+async def push_uptime_kuma():
+    global push_session
+    if not UPTIME_KUMA_PUSH_URL:
+        return
+    if push_session is None or push_session.closed:
+        push_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
+    try:
+        async with push_session.get(UPTIME_KUMA_PUSH_URL) as resp:
+            if resp.status != 200:
+                print(f"Uptime Kuma push failed: {resp.status}")
+    except Exception as e:
+        print(f"Uptime Kuma push failed: {e}")
 
 
 @tasks.loop(seconds=30)
@@ -703,14 +729,36 @@ async def heartbeat():
     """Touch a file so the container healthcheck can detect a wedged bot.
 
     Restart-on-exit only catches a crashed process; this also catches the
-    case where the process is alive but no longer connected to Discord.
+    case where the process is alive but no longer connected to Discord, or
+    connected but unable to reach Jellyfin. The second case ran unnoticed for
+    six days in October 2026: every call got a 401 while the container stayed
+    healthy.
     """
+    global jellyfin_stale_reported
+
+    if bot.is_closed():
+        return
+
+    # Only the polling loops call Jellyfin on a schedule, so without them
+    # there is nothing to judge freshness by.
+    polling = check_sessions.is_running() or update_dashboard.is_running()
+    if jf and polling:
+        stale = jf.seconds_since_auth_success()
+        if stale > JELLYFIN_STALE_SECONDS:
+            if not jellyfin_stale_reported:
+                print(f"Heartbeat withheld: no successful Jellyfin call for {int(stale)}s")
+                jellyfin_stale_reported = True
+            return
+        if jellyfin_stale_reported:
+            print("Heartbeat resumed: Jellyfin calls succeeding again")
+            jellyfin_stale_reported = False
+
     try:
-        if not bot.is_closed():
-            with open(HEARTBEAT_FILE, "w") as fh:
-                fh.write(str(datetime.now()))
+        with open(HEARTBEAT_FILE, "w") as fh:
+            fh.write(str(datetime.now()))
     except OSError as e:
         print(f"Could not write heartbeat: {e}")
+    await push_uptime_kuma()
 
 
 @tasks.loop(seconds=30)
