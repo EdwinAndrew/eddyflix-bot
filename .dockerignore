@@ -1,0 +1,9 @@
+.git
+.github
+.env
+.env.example
+data/
+__pycache__/
+*.pyc
+.venv/
+README.md
