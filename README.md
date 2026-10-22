@@ -5,7 +5,7 @@ playing, keeps watch stats and streaks, and runs movie nights: a scheduled Disco
 ping for the people who want one, and everyone watching in sync through Jellyfin's SyncPlay.
 
 Feature work and bugs are tracked in the
-[EddyFlix Bot project](https://github.com/users/EdwinAndrew/projects) and this repo's issues.
+[Eddyflix-Bot project](https://github.com/users/EdwinAndrew/projects/3) and this repo's issues.
 
 ## What it does
 
