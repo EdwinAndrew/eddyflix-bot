@@ -5,6 +5,11 @@ import aiohttp
 from typing import Dict, List
 from urllib.parse import quote
 
+# Without this, Jellyfin groups films into their collections when listing them:
+# 39 films and 19 collections here instead of 111 films.
+FILMS_NOT_COLLECTIONS = "CollapseBoxSetItems=false"
+
+
 class JellyfinClient:
     def __init__(self, base_url: str, api_key: str):
         self.base_url = base_url.rstrip('/')
@@ -137,7 +142,7 @@ class JellyfinClient:
     async def search_movies(self, term: str = "", limit: int = 25) -> List[dict]:
         """Films whose title matches term (all films, by name, when term is empty)."""
         endpoint = (f"/Items?IncludeItemTypes=Movie&Recursive=true&Limit={limit}"
-                    "&SortBy=SortName&Fields=ProductionYear")
+                    f"&SortBy=SortName&Fields=ProductionYear&{FILMS_NOT_COLLECTIONS}")
         if term:
             endpoint += f"&SearchTerm={quote(term)}"
         result = await self._get(endpoint)
@@ -146,7 +151,7 @@ class JellyfinClient:
     async def random_movies(self, count: int) -> List[dict]:
         result = await self._get(
             f"/Items?IncludeItemTypes=Movie&Recursive=true&SortBy=Random&Limit={count}"
-            "&Fields=ProductionYear")
+            f"&Fields=ProductionYear&{FILMS_NOT_COLLECTIONS}")
         return result.get('Items', []) if isinstance(result, dict) else []
 
     async def get_image(self, item_id: str, image_type: str = "Primary",
