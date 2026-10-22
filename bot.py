@@ -49,6 +49,9 @@ class EddyFlixBot(commands.Bot):
         print(f'Activity channel: {config.ACTIVITY_CHANNEL_ID}')
 
         await watch_data.init_database()
+        if self.jf:
+            # One-off: drop "Finished" achievements the old guess handed out (#24)
+            await watch_data.recheck_series_completions(self.jf)
 
         try:
             synced = await self.tree.sync()

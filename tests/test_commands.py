@@ -7,7 +7,7 @@ import checks
 from bot import EddyFlixBot
 
 EXPECTED = {
-    "jf-achievements", "jf-achievements-all", "jf-debug-sessions", "jf-health", "jf-help",
+    "jf-achievements", "jf-achievements-all", "jf-debug-sessions", "jf-health", "jf-help", "jf-link",
     "jf-popular", "jf-recent", "jf-stats", "jf-stats-graph", "jf-status", "jf-streaks",
     "jf-streaks-leaderboard", "jf-subscribe", "jf-subscriptions", "jf-unsubscribe",
     "jf-weekly-digest", "movienight", "movievote",

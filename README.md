@@ -14,7 +14,7 @@ Feature work and bugs are tracked in the
 | **Dashboard** | One message in a channel, edited every minute: server status and active streams |
 | **Activity feed** | Connections, playback starts, switches and stops, and a warning at three transcodes |
 | **Weekly digest** | Sundays at 6 PM: watch time, top shows, who watched most |
-| **Achievements and streaks** | Hours-watched milestones, series completions, daily watch streaks |
+| **Achievements and streaks** | Hours-watched milestones, finished series (every episode in the library watched), daily watch streaks. `/jf-achievements` shows them as one card; `/jf-link` ties a Discord member to their Jellyfin user |
 | **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`. See below |
 | **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push |
 
@@ -22,7 +22,7 @@ Feature work and bugs are tracked in the
 
 `/jf-health` · `/jf-stats` · `/jf-status` · `/jf-recent` · `/jf-stats-graph` · `/jf-popular` ·
 `/jf-subscribe` · `/jf-unsubscribe` · `/jf-subscriptions` · `/jf-weekly-digest` ·
-`/jf-achievements` · `/jf-achievements-all` · `/jf-streaks` · `/jf-streaks-leaderboard` ·
+`/jf-achievements` · `/jf-achievements-all` · `/jf-link` · `/jf-streaks` · `/jf-streaks-leaderboard` ·
 `/jf-debug-sessions` · `/jf-help` · `/movienight` · `/movievote`
 
 ### Movie night
