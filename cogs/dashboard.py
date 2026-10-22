@@ -5,6 +5,7 @@ import discord
 from discord.ext import commands, tasks
 
 import config
+import parties
 
 
 class Dashboard(commands.Cog):
@@ -60,6 +61,13 @@ class Dashboard(commands.Cog):
                 inline=False
             )
 
+            # Who each stream is watching with, if it is part of a watch party
+            together = {}
+            for party in parties.find_parties(sessions).values():
+                for session in sessions:
+                    if session['Id'] in party['session_ids']:
+                        together[session['Id']] = [u for u in party['users'] if u != session.get('UserName')]
+
             if active_streams:
                 for session in active_streams:
                     user = session.get('UserName', 'Unknown')
@@ -80,9 +88,11 @@ class Dashboard(commands.Cog):
                     is_paused = session.get('PlayState', {}).get('IsPaused', False)
                     status_icon = "⏸️" if is_paused else "▶️"
 
+                    with_line = (f"\n🍿 with {', '.join(together[session['Id']])}"
+                                 if together.get(session['Id']) else "")
                     embed.add_field(
                         name=f"{status_icon} {user} on {device}",
-                        value=f"**{title}**\n{subtitle}\n`{'█' * (progress // 5)}{'░' * (20 - progress // 5)}` {progress}%",
+                        value=f"**{title}**\n{subtitle}\n`{'█' * (progress // 5)}{'░' * (20 - progress // 5)}` {progress}%{with_line}",
                         inline=False
                     )
             else:

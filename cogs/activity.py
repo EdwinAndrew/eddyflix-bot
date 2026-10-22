@@ -10,6 +10,7 @@ import discord
 from discord.ext import commands, tasks
 
 import config
+import parties
 import watch_data
 
 
@@ -18,6 +19,8 @@ class Activity(commands.Cog):
         self.bot = bot
         self.active_sessions = {}
         self.sessions_seeded = False   # set after the first session poll; see check_sessions
+        self.parties = {}              # item id -> the watch party on it; see update_parties
+        self.party_sessions = set()    # sessions that were in a party at the last poll
 
     async def poster_for(self, item: dict) -> bytes | None:
         """A small poster for a playback post: the show's for an episode, the film's
@@ -33,6 +36,46 @@ class Activity(commands.Cog):
         except Exception as e:
             print(f"No poster for {item.get('Name')}: {e}")
             return None
+
+    async def update_parties(self, parties_now: dict, channel, announce: bool):
+        """One post per watch party: sent when it forms, edited as people join or
+        leave, and turned into a "watched together" line when it ends. After a
+        restart, parties already running are tracked without a post."""
+        now = datetime.now()
+        for item_id, party in parties_now.items():
+            known = self.parties.get(item_id)
+            if known is None:
+                message = None
+                if announce:
+                    embed = parties.live_embed(party["item"], party["users"], now)
+                    files = []
+                    poster = await self.poster_for(party["item"])
+                    if poster:
+                        files.append(discord.File(io.BytesIO(poster), filename="poster.jpg"))
+                        embed.set_thumbnail(url="attachment://poster.jpg")
+                    message = await channel.send(embed=embed, files=files)
+                self.parties[item_id] = {"item": party["item"], "users": party["users"],
+                                         "everyone": set(party["users"]), "started": now,
+                                         "message": message}
+            elif party["users"] != known["users"]:
+                known["users"] = party["users"]
+                known["everyone"] |= set(party["users"])
+                await self._edit(known, parties.live_embed(known["item"], known["users"], known["started"]))
+
+        for item_id in [i for i in self.parties if i not in parties_now]:
+            known = self.parties.pop(item_id)
+            everyone = sorted(known["everyone"], key=str.lower)
+            await self._edit(known, parties.ended_embed(known["item"], everyone, known["started"], now))
+
+    async def _edit(self, known: dict, embed: discord.Embed):
+        if known["message"] is None:
+            return
+        if known["message"].attachments:
+            embed.set_thumbnail(url="attachment://poster.jpg")
+        try:
+            await known["message"].edit(embed=embed)
+        except discord.HTTPException as e:
+            print(f"Could not update the watch party post: {e}")
 
     @commands.Cog.listener()
     async def on_services_ready(self):
@@ -55,6 +98,11 @@ class Activity(commands.Cog):
             # announced as "connected" or "started watching". The first poll only
             # takes note of them; watch history is still recorded below.
             announce = self.sessions_seeded
+
+            # People watching the same thing together get one post between them,
+            # so their own start and stop posts are skipped.
+            parties_now = parties.find_parties(sessions)
+            in_party = {sid for party in parties_now.values() for sid in party['session_ids']}
 
             for session in sessions:
                 sess_id = session['Id']
@@ -101,7 +149,7 @@ class Activity(commands.Cog):
                     await watch_data.record_watch_start(sess_id, session)
 
                 # Only send notification if the item ID actually changed (switched content)
-                if announce and now_playing and now_item_id != prev_item_id:
+                if announce and now_playing and now_item_id != prev_item_id and sess_id not in in_party:
                     item_name = now_playing.get('Name', 'Unknown')
                     item_type = now_playing.get('Type', 'Media')
 
@@ -148,13 +196,14 @@ class Activity(commands.Cog):
                     if prev_item_id:
                         await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item_id)
 
-                    embed = discord.Embed(
-                        title="⏹️ Playback Stopped",
-                        description=f"**{username}** stopped watching **{prev_name}**",
-                        color=discord.Color.greyple(),
-                        timestamp=datetime.now()
-                    )
-                    await activity_channel.send(embed=embed)
+                    if sess_id not in self.party_sessions:
+                        embed = discord.Embed(
+                            title="⏹️ Playback Stopped",
+                            description=f"**{username}** stopped watching **{prev_name}**",
+                            color=discord.Color.greyple(),
+                            timestamp=datetime.now()
+                        )
+                        await activity_channel.send(embed=embed)
 
                 self.active_sessions[sess_id] = session
 
@@ -177,6 +226,8 @@ class Activity(commands.Cog):
                 await activity_channel.send(embed=embed)
                 del self.active_sessions[sess_id]
 
+            await self.update_parties(parties_now, activity_channel, announce)
+            self.party_sessions = in_party
             self.sessions_seeded = True
 
             # Monitor transcodes - warn if too many
