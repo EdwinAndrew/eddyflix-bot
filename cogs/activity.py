@@ -2,6 +2,7 @@
 
 Also where watch history gets recorded, since that follows the same sessions.
 """
+import io
 from datetime import datetime
 
 import aiosqlite
@@ -17,6 +18,21 @@ class Activity(commands.Cog):
         self.bot = bot
         self.active_sessions = {}
         self.sessions_seeded = False   # set after the first session poll; see check_sessions
+
+    async def poster_for(self, item: dict) -> bytes | None:
+        """A small poster for a playback post: the show's for an episode, the film's
+        otherwise. Uploaded rather than linked, because Jellyfin's public address
+        answers Canadian addresses only and Discord fetches linked images from
+        elsewhere. None if there is no image or Jellyfin does not answer, and the
+        post goes out without one."""
+        image_id = item.get('SeriesId') if item.get('Type') == 'Episode' and item.get('SeriesId') else item.get('Id')
+        if not image_id or self.bot.jf is None:
+            return None
+        try:
+            return await self.bot.jf.get_image(image_id, "Primary", max_width=300)
+        except Exception as e:
+            print(f"No poster for {item.get('Name')}: {e}")
+            return None
 
     @commands.Cog.listener()
     async def on_services_ready(self):
@@ -117,10 +133,13 @@ class Activity(commands.Cog):
 
                     embed.add_field(name="Device", value=device, inline=True)
 
-                    # Skip thumbnail for now - internal Docker URLs won't work for Discord
-                    # TODO: Use public Tailscale URL if you want thumbnails
+                    files = []
+                    poster = await self.poster_for(now_playing)
+                    if poster:
+                        files.append(discord.File(io.BytesIO(poster), filename="poster.jpg"))
+                        embed.set_thumbnail(url="attachment://poster.jpg")
 
-                    await activity_channel.send(embed=embed)
+                    await activity_channel.send(embed=embed, files=files)
 
                 elif prev_playing and not now_playing:
                     prev_name = prev_playing.get('Name', 'Unknown')
