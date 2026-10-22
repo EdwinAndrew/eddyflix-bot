@@ -42,7 +42,7 @@ On start the bot creates whatever is missing, and never deletes anything:
   for the others**: everyone opens the same film, joins the group, then playback stays in sync
 - **`/movievote`**: a Discord poll of up to four films, random ones if none are given
 
-Names in [movie_night.py](movie_night.py) are the source of truth. Rename a role there, not in
+Names in [cogs/movie_night.py](cogs/movie_night.py) are the source of truth. Rename a role there, not in
 Discord, or the bot recreates the old name.
 
 ## Running it
@@ -76,6 +76,22 @@ All settings are in [.env.example](.env.example).
   above the roles it hands out
 
 ## Development
+
+### Layout
+
+| | |
+|---|---|
+| `bot.py` | Entry point: the bot class, start-up order, loading the cogs |
+| `config.py` | Settings from the environment |
+| `jellyfin_client.py` | Jellyfin API calls |
+| `watch_data.py` | The SQLite database: recording plays, streaks, achievements |
+| `checks.py` | The owner-only check and the slash-command error handler |
+| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions`, `achievements`, `movie_night`, `help` |
+
+Background loops start when the bot dispatches `services_ready`, ten seconds after it connects
+and has set up the database and the movie night channels. Each cog with a loop listens for it.
+
+### Running locally
 
 ```bash
 python -m venv .venv && . .venv/bin/activate

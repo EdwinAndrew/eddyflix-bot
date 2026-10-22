@@ -35,7 +35,7 @@ jobs:
       # Importing runs all module-level setup (commands, movie night roles list)
       # without connecting to Discord, which only happens under __main__.
       - name: The bot imports
-        run: docker run --rm --entrypoint python eddyflix-bot:test -c "import bot, movie_night; print('ok:', len(movie_night.FLAIRS), 'flairs')"
+        run: docker run --rm --entrypoint python eddyflix-bot:test -c "import bot; from cogs import movie_night; print('ok:', len(movie_night.FLAIRS), 'flairs')"
 
       - name: Tags
         id: meta
