@@ -28,3 +28,9 @@ def test_random_picks_films_not_collections():
     endpoint = requested(lambda c: c.random_movies(4))
     assert "SortBy=Random" in endpoint
     assert "CollapseBoxSetItems=false" in endpoint
+
+
+def test_episode_count_is_per_series():
+    # SeriesId is ignored by Jellyfin 12 and counted the whole library.
+    endpoint = requested(lambda c: c.get_series_episode_count("abc"))
+    assert "ParentId=abc" in endpoint and "SeriesId" not in endpoint

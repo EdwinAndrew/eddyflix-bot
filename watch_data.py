@@ -86,6 +86,28 @@ async def init_database():
             )
         """)
 
+        # Series totals for "62/62 episodes". Rows from before 2026-10-22 have none.
+        async with db.execute("PRAGMA table_info(achievements)") as cursor:
+            if 'item_total' not in [c[1] for c in await cursor.fetchall()]:
+                await db.execute("ALTER TABLE achievements ADD COLUMN item_total INTEGER")
+
+        # Which Jellyfin user a Discord member is, set with /jf-link
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_links (
+                discord_user_id TEXT PRIMARY KEY,
+                jellyfin_user TEXT NOT NULL,
+                linked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # One-off data fixes that have run, so they run once
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                name TEXT PRIMARY KEY,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Streaks table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS streaks (
@@ -253,37 +275,29 @@ async def check_achievements(jf, user_name: str, series_name: str, item_name: st
             result = await cursor.fetchone()
             watched_count = result[0] if result else 0
 
-        # Try to get accurate total episodes from Jellyfin using series id
-        total_episodes = None
+        # The series' episode count in the library. Finished means every one of
+        # them watched. If Jellyfin does not answer, nothing is awarded: the old
+        # fallback ("10 episodes is a series") handed out wrong ones (issue #24).
+        total_episodes = 0
         try:
-            # Fetch item details to get series id
             item = await jf.get_item(item_id)
-            series_id = item.get('SeriesId') or item.get('SeriesId') or item.get('ParentId')
+            series_id = item.get('SeriesId')
             if series_id:
                 total_episodes = await jf.get_series_episode_count(series_id)
         except Exception:
-            total_episodes = None
+            total_episodes = 0
 
-        # Determine completion: prefer accurate count if available
-        completed = False
-        if total_episodes and total_episodes > 0:
-            if watched_count >= total_episodes:
-                completed = True
-        else:
-            # Fallback heuristic: at least 10 distinct episodes
-            if watched_count >= 10:
-                completed = True
-
-        if completed:
+        if total_episodes > 0 and watched_count >= total_episodes:
             async with db.execute("""
                 SELECT id FROM achievements
                 WHERE user_name = ? AND achievement_type = 'series_completion' AND item_name = ?
             """, (user_name, series_name)) as check:
                 if not await check.fetchone():
                     await db.execute("""
-                        INSERT INTO achievements (user_name, achievement_type, achievement_name, item_name, value)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (user_name, 'series_completion', f'Finished "{series_name}"', series_name, watched_count))
+                        INSERT INTO achievements (user_name, achievement_type, achievement_name, item_name, value, item_total)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (user_name, 'series_completion', f'Finished "{series_name}"', series_name,
+                          watched_count, total_episodes))
     
     # Check for watch time milestones
     async with db.execute("""
@@ -306,3 +320,109 @@ async def check_achievements(jf, user_name: str, series_name: str, item_name: st
                                 INSERT INTO achievements (user_name, achievement_type, achievement_name, value)
                                 VALUES (?, ?, ?, ?)
                             """, (user_name, 'watch_milestone', f'Watched {milestone} Hours', milestone))
+
+
+# --- One-off fixes -----------------------------------------------------------
+
+RECHECK_SERIES = "2026-10-recheck-series-completions"
+
+
+async def recheck_series_completions(jf) -> list[str] | None:
+    """Drop "Finished" achievements that do not hold (issue #24). Runs once.
+
+    Until 2026-10-22 the bot could not count a series' episodes, so it awarded
+    "Finished" after 10 distinct episodes, or 13 under an older rule. Each one is
+    checked against the library: kept if every episode in it has been watched,
+    dropped if not. A series no longer in the library cannot be checked; it is
+    kept unless it carries exactly 10 episodes, the fallback's signature.
+    Returns what was dropped, or None if it already ran or Jellyfin did not answer
+    (then it tries again at the next start).
+    """
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("SELECT 1 FROM schema_migrations WHERE name = ?", (RECHECK_SERIES,)) as cur:
+            if await cur.fetchone():
+                return None
+        async with db.execute("""
+            SELECT id, user_name, item_name, value FROM achievements
+            WHERE achievement_type = 'series_completion'
+        """) as cur:
+            rows = await cur.fetchall()
+
+        dropped = []
+        try:
+            for row_id, user, series, value in rows:
+                async with db.execute("""
+                    SELECT COUNT(DISTINCT item_id) FROM watch_history
+                    WHERE user_name = ? AND series_name = ? AND item_type = 'Episode'
+                """, (user, series)) as cur:
+                    watched = (await cur.fetchone())[0]
+                series_id = await jf.find_series_id(series)
+                total = await jf.get_series_episode_count(series_id) if series_id else 0
+                if series_id and total == 0:
+                    raise RuntimeError(f"no episode count for {series}")
+                if series_id:
+                    keep = watched >= total
+                    if keep:
+                        await db.execute("UPDATE achievements SET value = ?, item_total = ? WHERE id = ?",
+                                         (watched, total, row_id))
+                else:
+                    keep = value != 10
+                if not keep:
+                    await db.execute("DELETE FROM achievements WHERE id = ?", (row_id,))
+                    dropped.append(f"{user}: {series} ({watched}/{total or '?'} episodes)")
+        except Exception as e:
+            print(f"Series recheck postponed, Jellyfin did not answer: {e}")
+            return None
+
+        await db.execute("INSERT INTO schema_migrations (name) VALUES (?)", (RECHECK_SERIES,))
+        await db.commit()
+    for line in dropped:
+        print(f"Series recheck dropped {line}")
+    return dropped
+
+
+# --- Discord ↔ Jellyfin -------------------------------------------------------
+
+async def get_link(discord_user_id: int) -> str | None:
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("SELECT jellyfin_user FROM user_links WHERE discord_user_id = ?",
+                              (str(discord_user_id),)) as cur:
+            row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def set_link(discord_user_id: int, jellyfin_user: str):
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO user_links (discord_user_id, jellyfin_user) VALUES (?, ?)
+            ON CONFLICT(discord_user_id) DO UPDATE SET jellyfin_user = excluded.jellyfin_user,
+                                                       linked_at = CURRENT_TIMESTAMP
+        """, (str(discord_user_id), jellyfin_user))
+        await db.commit()
+
+
+# --- Reading for the achievements card ----------------------------------------
+
+async def achievement_summary(user_name: str) -> dict:
+    """Everything the achievements card shows for one user."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("""
+            SELECT SUM(duration_seconds) FROM watch_history
+            WHERE user_name = ? AND duration_seconds IS NOT NULL
+        """, (user_name,)) as cur:
+            seconds = (await cur.fetchone())[0] or 0
+        async with db.execute("""
+            SELECT achievement_type, item_name, value, item_total, earned_at FROM achievements
+            WHERE user_name = ? ORDER BY earned_at DESC
+        """, (user_name,)) as cur:
+            rows = await cur.fetchall()
+        async with db.execute("SELECT current_streak, longest_streak FROM streaks WHERE user_name = ?",
+                              (user_name,)) as cur:
+            streak = await cur.fetchone()
+    return {
+        "hours": seconds / 3600,
+        "hour_milestones": sorted(v for t, _, v, _, _ in rows if t == 'watch_milestone'),
+        "streak_milestones": sorted(v for t, _, v, _, _ in rows if t == 'streak_milestone'),
+        "series": [(name, value, total, earned) for t, name, value, total, earned in rows if t == 'series_completion'],
+        "streak": streak,   # (current, longest) or None
+    }

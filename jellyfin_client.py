@@ -169,11 +169,25 @@ class JellyfinClient:
                 return None
             return await resp.read()
 
+    async def find_series_id(self, name: str) -> str | None:
+        """The id of the series with exactly this name, or None if it is not in the library."""
+        result = await self._get(f"/Items?IncludeItemTypes=Series&Recursive=true&SearchTerm={quote(name)}")
+        for item in result.get('Items', []) if isinstance(result, dict) else []:
+            if item.get('Name') == name:
+                return item.get('Id')
+        return None
+
+    async def get_user_names(self) -> List[str]:
+        """Jellyfin's user names, for /jf-link."""
+        result = await self._get("/Users")
+        return sorted((u.get('Name') for u in result if u.get('Name')), key=str.lower) if isinstance(result, list) else []
+
     async def get_series_episode_count(self, series_id: str) -> int:
-        """Return the total number of episodes for a series id"""
+        """Episodes of a series in the library; 0 if Jellyfin does not answer."""
         try:
-            # Query items filtered by SeriesId and include only Episodes; use Limit=1 to get TotalRecordCount
-            endpoint = f"/Items?SeriesId={series_id}&IncludeItemTypes=Episode&Recursive=true&Limit=1"
+            # ParentId, not SeriesId: Jellyfin 12 ignores SeriesId on /Items and
+            # counted every episode in the library (1239) for every show.
+            endpoint = f"/Items?ParentId={series_id}&IncludeItemTypes=Episode&Recursive=true&Limit=1"
             result = await self._get(endpoint)
 
             # Result can be a dict with TotalRecordCount

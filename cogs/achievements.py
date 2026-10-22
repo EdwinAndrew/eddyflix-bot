@@ -1,6 +1,8 @@
 """Achievements and streaks: /jf-achievements, /jf-streaks, the leaderboard, and the
 owner's /jf-achievements-all and /jf-debug-sessions. They are earned in watch_data.py."""
-from datetime import datetime
+import os
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 import discord
@@ -8,12 +10,81 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
-from checks import owner_only
+import watch_data
+from checks import is_owner, owner_only
+
+LOCAL = ZoneInfo(os.getenv("TZ", "America/Toronto"))
+STREAK_BADGES = {7: "7-day", 30: "30-day", 100: "100-day"}
+
+
+def earned_unix(earned_at) -> int | None:
+    """Achievement times come in two shapes: SQLite's CURRENT_TIMESTAMP, which is
+    UTC ("2026-10-22 18:00:00"), and the bot's own isoformat(), which is local
+    ("2026-10-22T14:00:00.123456")."""
+    try:
+        dt = datetime.fromisoformat(str(earned_at))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=LOCAL if "T" in str(earned_at) else timezone.utc)
+    return int(dt.timestamp())
+
+
+def achievement_card(user_name: str, summary: dict, linked: bool, limit: int = 20) -> discord.Embed:
+    """One compact embed: watch time, streak, finished series."""
+    embed = discord.Embed(title=f"🏅 {user_name}", colour=discord.Colour.gold())
+
+    earned = summary["hour_milestones"]
+    hours_line = f"**{summary['hours']:,.0f} h** watched"
+    if earned:
+        hours_line += "\n" + " · ".join(f"**{v:,}**" if v == earned[-1] else f"{v:,}" for v in earned) + " h"
+    upcoming = [m for m in config.ACHIEVEMENT_MILESTONES if m not in earned and m > summary["hours"]]
+    if upcoming:
+        hours_line += f"\nNext: {upcoming[0]:,} h ({upcoming[0] - summary['hours']:,.0f} to go)"
+    embed.add_field(name="⏱️ Watch time", value=hours_line, inline=True)
+
+    if summary["streak"]:
+        current, best = summary["streak"]
+        streak_line = f"Current **{current}** · Best **{best}** days"
+        badges = [STREAK_BADGES.get(v, f"{v}-day") for v in summary["streak_milestones"]]
+        if badges:
+            streak_line += "\n🏅 " + " · ".join(badges)
+    else:
+        streak_line = "No streak yet"
+    embed.add_field(name="🔥 Streak", value=streak_line, inline=True)
+
+    series = summary["series"]
+    lines = []
+    for name, watched, total, earned_at in series[:limit]:
+        episodes = f"{watched}/{total} episodes" if total else f"{watched} episodes"
+        ts = earned_unix(earned_at)
+        lines.append(f"**{name}** · {episodes}" + (f" · <t:{ts}:D>" if ts else ""))
+    def render(shown):
+        hidden = len(series) - len(shown)
+        return "\n".join(shown + ([f"… and {hidden} more"] if hidden else [])) or "None yet"
+
+    text = render(lines)
+    while len(text) > 1000 and lines:           # embed fields hold 1024 characters
+        lines.pop()
+        text = render(lines)
+    embed.add_field(name=f"📺 Finished series ({len(series)})", value=text, inline=False)
+
+    if not linked:
+        embed.set_footer(text="Shown for your Discord name. Use /jf-link to connect your Jellyfin user.")
+    return embed
 
 
 class Achievements(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def resolve_user(self, interaction: discord.Interaction, user_name: str | None) -> tuple[str, bool]:
+        """Who to show: the name given, else the caller's linked Jellyfin user, else
+        their Discord name. The flag says whether it came from a link or by hand."""
+        if user_name:
+            return user_name, True
+        linked = await watch_data.get_link(interaction.user.id)
+        return (linked, True) if linked else (interaction.user.name, False)
 
     @app_commands.command(name="jf-achievements", description="List achievements for a user (default: your Jellyfin username)")
     async def achievements_command(self, interaction: discord.Interaction, user_name: str = None, limit: int = 20):
@@ -21,39 +92,47 @@ class Achievements(commands.Cog):
         await interaction.response.defer()
 
         try:
-            if not user_name:
-                user_name = interaction.user.name
-
-            async with aiosqlite.connect(config.DB_PATH) as db:
-                async with db.execute("""
-                    SELECT achievement_type, achievement_name, item_name, value, earned_at
-                    FROM achievements
-                    WHERE user_name = ?
-                    ORDER BY earned_at DESC
-                    LIMIT ?
-                """, (user_name, limit)) as cursor:
-                    rows = await cursor.fetchall()
-
-            if not rows:
-                await interaction.followup.send(f"No achievements found for {user_name}.")
+            user_name, linked = await self.resolve_user(interaction, user_name)
+            summary = await watch_data.achievement_summary(user_name)
+            if not (summary["hours"] or summary["series"] or summary["streak"]):
+                hint = "" if linked else "\nIs your Jellyfin name different? Link it with `/jf-link`."
+                await interaction.followup.send(f"No watch history for **{user_name}** yet.{hint}")
                 return
-
-            embed = discord.Embed(title=f"🏅 Achievements - {user_name}", color=discord.Color.blue(), timestamp=datetime.now())
-            for ach_type, ach_name, item_name, value, earned_at in rows:
-                try:
-                    dt = datetime.fromisoformat(earned_at)
-                    date_str = dt.strftime('%Y-%m-%d')
-                except (ValueError, TypeError):
-                    date_str = "Unknown"
-
-                name = ach_name
-                desc = f"{item_name or ''} — {value or ''}\n{date_str}"
-                embed.add_field(name=name, value=desc, inline=False)
-
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=achievement_card(user_name, summary, linked, limit))
 
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}")
+
+    @app_commands.command(name="jf-link", description="Connect your Discord account to your Jellyfin user")
+    @app_commands.describe(jellyfin_user="Your Jellyfin user name",
+                           member="(Owner) Link someone else instead")
+    async def link_command(self, interaction: discord.Interaction, jellyfin_user: str,
+                           member: discord.Member | None = None):
+        target = member or interaction.user
+        if target.id != interaction.user.id and not await is_owner(interaction):
+            await interaction.response.send_message("Only the server owner can link someone else.", ephemeral=True)
+            return
+        try:
+            names = await self.bot.jf.get_user_names() if self.bot.jf else []
+        except Exception:
+            names = []
+        match = next((n for n in names if n.lower() == jellyfin_user.strip().lower()), None)
+        if names and not match:
+            await interaction.response.send_message(f"There is no Jellyfin user called **{jellyfin_user}**.", ephemeral=True)
+            return
+        await watch_data.set_link(target.id, match or jellyfin_user.strip())
+        who = "You are" if target.id == interaction.user.id else f"{target.mention} is"
+        await interaction.response.send_message(
+            f"{who} now **{match or jellyfin_user.strip()}** on Jellyfin. `/jf-achievements` and `/jf-streaks` "
+            "use it by default.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+    @link_command.autocomplete("jellyfin_user")
+    async def link_user_choices(self, interaction: discord.Interaction, current: str):
+        try:
+            names = await self.bot.jf.get_user_names() if self.bot.jf else []
+        except Exception:
+            return []
+        return [app_commands.Choice(name=n, value=n) for n in names if current.lower() in n.lower()][:25]
 
     @app_commands.command(name="jf-achievements-all", description="(Owner) List recent achievements across users")
     @owner_only()
@@ -63,26 +142,22 @@ class Achievements(commands.Cog):
         try:
             async with aiosqlite.connect(config.DB_PATH) as db:
                 async with db.execute("""
-                    SELECT user_name, achievement_type, achievement_name, item_name, value, earned_at
-                    FROM achievements
-                    ORDER BY earned_at DESC
-                    LIMIT ?
-                """, (limit,)) as cursor:
-                    rows = await cursor.fetchall()
+                    SELECT user_name FROM achievements UNION SELECT user_name FROM streaks
+                """) as cursor:
+                    users = sorted((r[0] for r in await cursor.fetchall()), key=str.lower)
 
-            if not rows:
+            if not users:
                 await interaction.followup.send("No achievements found.")
                 return
 
-            embed = discord.Embed(title=f"🏆 Recent Achievements", color=discord.Color.gold(), timestamp=datetime.now())
-            for user, ach_type, ach_name, item_name, value, earned_at in rows:
-                try:
-                    dt = datetime.fromisoformat(earned_at)
-                    date_str = dt.strftime('%Y-%m-%d')
-                except (ValueError, TypeError):
-                    date_str = "Unknown"
-                embed.add_field(name=f"{ach_name} — {user}", value=f"{item_name or ''} • {value or ''}\n{date_str}", inline=False)
-
+            lines = []
+            for user in users[:limit]:
+                summary = await watch_data.achievement_summary(user)
+                best = summary["streak"][1] if summary["streak"] else 0
+                lines.append(f"**{user}** · {summary['hours']:,.0f} h · best streak {best} d · "
+                             f"{len(summary['series'])} series finished")
+            embed = discord.Embed(title="🏆 Achievements, everyone", description="\n".join(lines)[:4000],
+                                  colour=discord.Colour.gold())
             await interaction.followup.send(embed=embed)
 
         except Exception as e:
@@ -94,8 +169,7 @@ class Achievements(commands.Cog):
         await interaction.response.defer()
 
         try:
-            if not user_name:
-                user_name = interaction.user.name
+            user_name, _ = await self.resolve_user(interaction, user_name)
 
             async with aiosqlite.connect(config.DB_PATH) as db:
                 async with db.execute("""

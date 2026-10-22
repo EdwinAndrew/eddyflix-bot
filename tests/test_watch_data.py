@@ -104,6 +104,7 @@ def test_series_finished_when_every_episode_is_watched(db_path):
     add_episodes(db_path, 6)
     check(db_path, FakeJellyfin(episodes=6))
     assert achievements(db_path, "series_completion") == [('Finished "Show"', 6)]
+    assert _fetch(db_path, "SELECT item_total FROM achievements") == [(6,)]
 
 
 def test_series_not_finished_while_episodes_remain(db_path):
@@ -112,11 +113,17 @@ def test_series_not_finished_while_episodes_remain(db_path):
     assert achievements(db_path, "series_completion") == []
 
 
-def test_without_jellyfin_ten_episodes_count_as_finished(db_path):
-    # The fallback that issue #24 wants gone; pinned here so changing it is deliberate.
+def test_without_jellyfin_nothing_is_awarded(db_path):
+    # The old fallback called 10 episodes a finished series (issue #24).
     add_episodes(db_path, 10)
     check(db_path, FakeJellyfin(fail=True))
-    assert achievements(db_path, "series_completion") == [('Finished "Show"', 10)]
+    assert achievements(db_path, "series_completion") == []
+
+
+def test_unknown_episode_count_awards_nothing(db_path):
+    add_episodes(db_path, 10)
+    check(db_path, FakeJellyfin(episodes=0))
+    assert achievements(db_path, "series_completion") == []
 
 
 def test_hour_milestones_awarded_once_each(db_path):
@@ -145,3 +152,77 @@ def test_timestamps_keep_the_stored_format(db_path):
     (start,), = _fetch(db_path, "SELECT start_time FROM watch_history")
     # Same as rows written before Python 3.12: a space between date and time.
     assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?", start), start
+
+
+# --- the one-off recheck (#24) -------------------------------------------------
+
+class LibraryJellyfin:
+    """Series by name -> episode count; missing names are not in the library."""
+    def __init__(self, library, fail=False):
+        self.library, self.fail = library, fail
+
+    async def find_series_id(self, name):
+        if self.fail:
+            raise RuntimeError("Jellyfin down")
+        return name if name in self.library else None
+
+    async def get_series_episode_count(self, series_id):
+        return self.library[series_id]
+
+
+def award(path, series, value):
+    run(lambda db: db.execute(
+        "INSERT INTO achievements (user_name, achievement_type, achievement_name, item_name, value)"
+        " VALUES ('eddy', 'series_completion', ?, ?, ?)", (f'Finished "{series}"', series, value)), path)
+
+
+def test_recheck_keeps_what_holds_and_drops_the_rest(db_path):
+    add_episodes(db_path, 20, series="Landman")          # all 20 watched
+    add_episodes(db_path, 14, series="Euphoria (US)")     # 14 of 20
+    for series, value in (("Landman", 10), ("Euphoria (US)", 10), ("Culinary Class Wars", 10), ("Breaking Bad", 62)):
+        award(db_path, series, value)
+
+    dropped = asyncio.run(watch_data.recheck_series_completions(
+        LibraryJellyfin({"Landman": 20, "Euphoria (US)": 20})))
+
+    kept = _fetch(db_path, "SELECT item_name, value, item_total FROM achievements ORDER BY item_name")
+    # Breaking Bad: gone from the library but not a guess. Landman: finished, counts refreshed.
+    assert kept == [("Breaking Bad", 62, None), ("Landman", 20, 20)]
+    assert sorted(dropped) == ["eddy: Culinary Class Wars (0/? episodes)", "eddy: Euphoria (US) (14/20 episodes)"]
+
+
+def test_recheck_runs_once(db_path):
+    award(db_path, "Show", 10)
+    assert asyncio.run(watch_data.recheck_series_completions(LibraryJellyfin({"Show": 30}))) is not None
+    award(db_path, "Show", 10)
+    assert asyncio.run(watch_data.recheck_series_completions(LibraryJellyfin({"Show": 30}))) is None
+    assert len(_fetch(db_path, "SELECT id FROM achievements")) == 1   # the second award was left alone
+
+
+def test_recheck_waits_for_jellyfin(db_path):
+    award(db_path, "Show", 10)
+    assert asyncio.run(watch_data.recheck_series_completions(LibraryJellyfin({}, fail=True))) is None
+    assert len(_fetch(db_path, "SELECT id FROM achievements")) == 1
+    assert _fetch(db_path, "SELECT name FROM schema_migrations") == []   # tries again next start
+
+
+# --- links and the summary -------------------------------------------------------
+
+def test_links_set_and_replace(db_path):
+    assert asyncio.run(watch_data.get_link(42)) is None
+    asyncio.run(watch_data.set_link(42, "eddy"))
+    asyncio.run(watch_data.set_link(42, "Eddy2"))
+    assert asyncio.run(watch_data.get_link(42)) == "Eddy2"
+
+
+def test_summary(db_path):
+    add_episodes(db_path, 6, hours_each=2)               # 12 hours
+    check(db_path, FakeJellyfin(episodes=6))
+    for n in range(7):
+        watch_on(db_path, D1 + timedelta(days=n))
+    summary = asyncio.run(watch_data.achievement_summary("eddy"))
+    assert round(summary["hours"]) == 12
+    assert summary["hour_milestones"] == [10]
+    assert summary["streak_milestones"] == [7]
+    assert summary["streak"] == (7, 7)
+    assert [(name, value, total) for name, value, total, _ in summary["series"]] == [("Show", 6, 6)]
