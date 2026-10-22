@@ -148,8 +148,7 @@ def picker_embed() -> discord.Embed:
             f"{lines}\n\n"
             f"**{TICKET_ROLE}** is the one that does something: you get pinged when a movie night "
             "is scheduled. Use the button to get it or drop it.\n\n"
-            f"Staff: **{DIRECTOR_ROLE}** runs the place, **{USHER_ROLE}** keeps order. "
-            "Those are handed out, not picked."
+            f"Staff: **{DIRECTOR_ROLE}** runs the place, **{USHER_ROLE}** keeps order."
         ),
         colour=discord.Colour(0xF4C430),
     )
