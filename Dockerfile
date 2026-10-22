@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy bot code
 COPY bot.py .
 COPY jellyfin_client.py .
+COPY movie_night.py .
 
 # Run as a non-root user. UID 1000 matches the PUID the rest of the stack
 # uses and the owner of the bind-mounted data directory, so the bot can

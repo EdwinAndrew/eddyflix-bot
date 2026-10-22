@@ -7,6 +7,7 @@ import asyncio
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 from jellyfin_client import JellyfinClient
+import movie_night
 from PIL import Image, ImageDraw, ImageFont
 import io
 import psutil
@@ -67,6 +68,10 @@ intents.guilds = True
 
 
 class MediaServerBot(commands.Bot):
+    async def setup_hook(self):
+        # Re-attach the #roles picker's buttons, which outlive the process.
+        self.add_view(movie_night.RolePicker())
+
     async def close(self):
         """Release the shared Jellyfin HTTP session before shutting down."""
         if jf is not None:
@@ -81,8 +86,12 @@ bot = MediaServerBot(command_prefix='!jf ', intents=intents)
 # Jellyfin client
 jf = JellyfinClient(JELLYFIN_URL, JELLYFIN_API_KEY) if JELLYFIN_API_KEY else None
 
+# /movienight, /movievote and the #roles picker
+movie_night.register(bot, jf)
+
 # State tracking
 active_sessions = {}
+sessions_seeded = False   # set after the first session poll; see check_sessions
 dashboard_message = None
 server_start_time = None
 db_path = "/app/data/jellyfin_bot.db"
@@ -582,6 +591,12 @@ async def on_ready():
     except Exception as e:
         print(f'Failed to sync commands: {e}')
 
+    # Movie night roles, channels and the #roles picker: created if missing
+    try:
+        await movie_night.ensure_structure(bot)
+    except Exception as e:
+        print(f'Movie night setup failed: {e}')
+
     # Wait 10 seconds before starting activity tracking (avoid startup spam)
     await asyncio.sleep(10)
 
@@ -764,7 +779,7 @@ async def heartbeat():
 @tasks.loop(seconds=30)
 async def check_sessions():
     """Check for session changes every 30 seconds"""
-    global active_sessions
+    global active_sessions, sessions_seeded
 
     try:
         sessions = await jf.get_sessions()
@@ -774,12 +789,18 @@ async def check_sessions():
         if not activity_channel:
             return
 
+        # active_sessions lives in memory, so after a restart every session
+        # Jellyfin still lists (idle ones linger for hours) looked new and was
+        # announced as "connected" or "started watching". The first poll only
+        # takes note of them; watch history is still recorded below.
+        announce = sessions_seeded
+
         for session in sessions:
             sess_id = session['Id']
             username = session.get('UserName', 'Unknown')
             device = session.get('DeviceName', 'Unknown')
 
-            if sess_id not in active_sessions:
+            if sess_id not in active_sessions and announce:
                 embed = discord.Embed(
                     title="👤 User Connected",
                     description=f"**{username}** connected from **{device}**",
@@ -819,7 +840,7 @@ async def check_sessions():
                 await record_watch_start(sess_id, session)
 
             # Only send notification if the item ID actually changed (switched content)
-            if now_playing and now_item_id != prev_item_id:
+            if announce and now_playing and now_item_id != prev_item_id:
                 item_name = now_playing.get('Name', 'Unknown')
                 item_type = now_playing.get('Type', 'Media')
 
@@ -891,6 +912,8 @@ async def check_sessions():
             )
             await activity_channel.send(embed=embed)
             del active_sessions[sess_id]
+
+        sessions_seeded = True
 
         # Monitor transcodes - warn if too many
         transcoding_sessions = [s for s in sessions if s.get('PlayState', {}).get('PlayMethod') == 'Transcode']

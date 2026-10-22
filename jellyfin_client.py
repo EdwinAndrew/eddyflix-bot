@@ -3,6 +3,7 @@ import time
 
 import aiohttp
 from typing import Dict, List
+from urllib.parse import quote
 
 class JellyfinClient:
     def __init__(self, base_url: str, api_key: str):
@@ -123,11 +124,45 @@ class JellyfinClient:
 
     async def get_item(self, item_id: str) -> dict:
         """Get a single item details by id"""
+        # /Items/{id} answers 400 here without a user id; the list endpoint
+        # filtered to one id does not.
         try:
-            return await self._get(f"/Items/{item_id}")
+            result = await self._get(f"/Items?Ids={item_id}&Fields=Overview,Genres")
+            items = result.get('Items', []) if isinstance(result, dict) else []
+            return items[0] if items else {}
         except Exception as e:
             print(f"Error getting item {item_id}: {e}")
             return {}
+
+    async def search_movies(self, term: str = "", limit: int = 25) -> List[dict]:
+        """Films whose title matches term (all films, by name, when term is empty)."""
+        endpoint = (f"/Items?IncludeItemTypes=Movie&Recursive=true&Limit={limit}"
+                    "&SortBy=SortName&Fields=ProductionYear")
+        if term:
+            endpoint += f"&SearchTerm={quote(term)}"
+        result = await self._get(endpoint)
+        return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def random_movies(self, count: int) -> List[dict]:
+        result = await self._get(
+            f"/Items?IncludeItemTypes=Movie&Recursive=true&SortBy=Random&Limit={count}"
+            "&Fields=ProductionYear")
+        return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def get_image(self, item_id: str, image_type: str = "Primary",
+                        max_width: int = 1000) -> bytes | None:
+        """An item's image as JPEG bytes, or None if it has none.
+
+        The bot uploads these to Discord itself. Linking to Jellyfin's public
+        address would not work: it answers Canadian addresses only, and
+        Discord fetches images from elsewhere.
+        """
+        url = f"{self.base_url}/Items/{item_id}/Images/{image_type}?maxWidth={max_width}&format=Jpg"
+        session = await self._get_session()
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.read()
 
     async def get_series_episode_count(self, series_id: str) -> int:
         """Return the total number of episodes for a series id"""
