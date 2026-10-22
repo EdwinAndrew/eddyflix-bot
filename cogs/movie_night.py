@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
+from discord.ext import commands
 
 TZ = ZoneInfo("America/Toronto")
 # Where people open Jellyfin from, e.g. https://jellyfin.example.com. Used for
@@ -290,37 +291,42 @@ async def _ensure_guild(bot: discord.Client, guild: discord.Guild):
 
 # --- slash commands --------------------------------------------------------
 
-def register(bot: discord.Client, jf):
-    """Add the commands to bot.tree. Call before the bot starts."""
+class MovieNight(commands.Cog):
+    """/movienight and /movievote. The #roles picker is re-attached in the bot's
+    setup_hook, and the roles and channels are created from on_ready."""
 
-    async def film_choices(term: str):
-        if jf is None:
+    def __init__(self, bot):
+        self.bot = bot
+
+
+    async def film_choices(self, term: str):
+        if self.bot.jf is None:
             return []
         try:
-            items = await jf.search_movies(term, limit=25)
+            items = await self.bot.jf.search_movies(term, limit=25)
         except Exception:
             return []
         return [app_commands.Choice(name=film_label(i)[:100], value=i["Id"]) for i in items]
 
-    async def resolve_film(value: str) -> dict | None:
+    async def resolve_film(self, value: str) -> dict | None:
         """The autocomplete gives an item id; typed text without picking is searched instead."""
         if JELLYFIN_ID.match(value):
-            item = await jf.get_item(value)
+            item = await self.bot.jf.get_item(value)
             if item:
                 return item
-        found = await jf.search_movies(value, limit=1)
+        found = await self.bot.jf.search_movies(value, limit=1)
         return found[0] if found else None
 
-    def channels(guild):
+    def channels(self, guild):
         return (discord.utils.get(guild.text_channels, name=ANNOUNCE_CHANNEL),
                 discord.utils.get(guild.voice_channels, name=VOICE_CHANNEL))
 
-    @bot.tree.command(name="movienight", description="Schedule a movie night: makes an event and pings Ticket Holders")
+    @app_commands.command(name="movienight", description="Schedule a movie night: makes an event and pings Ticket Holders")
     @app_commands.guild_only()
     @app_commands.describe(film="A film from the Jellyfin library",
                            day="Tonight, tomorrow, a weekday, or a date like 2026-10-31",
                            time="Start time, e.g. 8pm or 20:00 (a bare 8 means 8pm)")
-    async def movienight(interaction: discord.Interaction, film: str, day: str, time: str):
+    async def movienight(self, interaction: discord.Interaction, film: str, day: str, time: str):
         if not can_host(interaction.user):
             await interaction.response.send_message(f"Only a {DIRECTOR_ROLE} or {USHER_ROLE} can schedule movie nights.", ephemeral=True)
             return
@@ -333,12 +339,12 @@ def register(bot: discord.Client, jf):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        item = await resolve_film(film)
+        item = await self.resolve_film(film)
         if not item:
             await interaction.followup.send(f"No film called “{film}” in Jellyfin.", ephemeral=True)
             return
         guild = interaction.guild
-        announce, theatre = channels(guild)
+        announce, theatre = self.channels(guild)
         if announce is None or theatre is None:
             await interaction.followup.send("The Movie Night channels are missing. Restart the bot to recreate them.", ephemeral=True)
             return
@@ -349,8 +355,8 @@ def register(bot: discord.Client, jf):
         genres = ", ".join(item.get("Genres") or []) or "—"
         link = f"{PUBLIC_URL}/web/#/details?id={item['Id']}" if PUBLIC_URL else None
         film_ref = f"[{item.get('Name')}]({link})" if link else f"**{item.get('Name')}**"
-        backdrop = await jf.get_image(item["Id"], "Backdrop") or await jf.get_image(item["Id"], "Primary")
-        poster = await jf.get_image(item["Id"], "Primary", max_width=600)
+        backdrop = await self.bot.jf.get_image(item["Id"], "Backdrop") or await self.bot.jf.get_image(item["Id"], "Primary")
+        poster = await self.bot.jf.get_image(item["Id"], "Primary", max_width=600)
 
         event = await guild.create_scheduled_event(
             name=f"🎬 {title}"[:100],
@@ -403,11 +409,11 @@ def register(bot: discord.Client, jf):
         await interaction.followup.send(f"Scheduled **{title}** for <t:{unix}:F>, announced in {announce.mention}.", ephemeral=True)
 
     @movienight.autocomplete("film")
-    async def movienight_film(interaction: discord.Interaction, current: str):
-        return await film_choices(current)
+    async def movienight_film(self, interaction: discord.Interaction, current: str):
+        return await self.film_choices(current)
 
     @movienight.autocomplete("day")
-    async def movienight_day(interaction: discord.Interaction, current: str):
+    async def movienight_day(self, interaction: discord.Interaction, current: str):
         today = datetime.now(TZ).date()
         options = []
         for n in range(14):
@@ -416,30 +422,30 @@ def register(bot: discord.Client, jf):
             options.append(app_commands.Choice(name=f"{label} ({d.strftime('%b')} {d.day})", value=d.isoformat()))
         return [o for o in options if current.lower() in o.name.lower()][:25]
 
-    @bot.tree.command(name="movievote", description="Post a poll of films for the next movie night")
+    @app_commands.command(name="movievote", description="Post a poll of films for the next movie night")
     @app_commands.guild_only()
     @app_commands.describe(film1="A film (leave the films empty for a random pick)",
                            film2="Another film", film3="Another film", film4="Another film",
                            hours="How long the vote stays open (default 24)")
-    async def movievote(interaction: discord.Interaction, film1: str | None = None, film2: str | None = None,
+    async def movievote(self, interaction: discord.Interaction, film1: str | None = None, film2: str | None = None,
                         film3: str | None = None, film4: str | None = None,
                         hours: app_commands.Range[int, 1, 168] = 24):
         if not can_host(interaction.user):
             await interaction.response.send_message(f"Only a {DIRECTOR_ROLE} or {USHER_ROLE} can start a movie vote.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        announce, _ = channels(interaction.guild)
+        announce, _ = self.channels(interaction.guild)
         if announce is None:
             await interaction.followup.send("The Movie Night channels are missing. Restart the bot to recreate them.", ephemeral=True)
             return
 
         picks, seen = [], set()
         for value in (film1, film2, film3, film4):
-            if value and (item := await resolve_film(value)) and item["Id"] not in seen:
+            if value and (item := await self.resolve_film(value)) and item["Id"] not in seen:
                 picks.append(item)
                 seen.add(item["Id"])
         if len(picks) < 2:
-            for item in await jf.random_movies(10):
+            for item in await self.bot.jf.random_movies(10):
                 if len(picks) >= 4:
                     break
                 if item["Id"] not in seen:
@@ -460,8 +466,13 @@ def register(bot: discord.Client, jf):
         )
         await interaction.followup.send(f"Vote posted in {announce.mention}, open for {hours}h.", ephemeral=True)
 
-    async def movievote_film(interaction: discord.Interaction, current: str):
-        return await film_choices(current)
+    @movievote.autocomplete("film1")
+    @movievote.autocomplete("film2")
+    @movievote.autocomplete("film3")
+    @movievote.autocomplete("film4")
+    async def movievote_film(self, interaction: discord.Interaction, current: str):
+        return await self.film_choices(current)
 
-    for name in ("film1", "film2", "film3", "film4"):
-        movievote.autocomplete(name)(movievote_film)
+
+async def setup(bot):
+    await bot.add_cog(MovieNight(bot))
