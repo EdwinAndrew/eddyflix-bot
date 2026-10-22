@@ -1,7 +1,7 @@
 name: Build
 
-# Every push to main and every pull request builds the image and checks that the
-# bot imports. Pushes to main publish sha-<commit>; a vX.Y.Z tag publishes X.Y.Z,
+# Every push to main and every pull request runs the tests, then builds the image
+# and checks that the bot imports. Pushes to main publish sha-<commit>; a vX.Y.Z tag publishes X.Y.Z,
 # which is what the server pins.
 on:
   push:
@@ -14,7 +14,23 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"    # the image's Python
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - run: python -m pytest -q
+
   build:
+    needs: test
     runs-on: ubuntu-24.04
     env:
       IMAGE: ghcr.io/${{ github.repository }}
