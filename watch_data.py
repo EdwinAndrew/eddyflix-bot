@@ -1,9 +1,15 @@
 """The watch-history database: tables, recording plays, streaks and achievements."""
+import sqlite3
 from datetime import datetime
 
 import aiosqlite
 
 import config
+
+# Python 3.12 deprecated sqlite3's built-in datetime adapter. This registers the
+# same conversion explicitly, so timestamps keep the format already in the
+# database: "2026-10-22 20:00:00.123456", with a space.
+sqlite3.register_adapter(datetime, lambda value: value.isoformat(" "))
 
 
 async def init_database():
