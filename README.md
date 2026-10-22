@@ -38,7 +38,8 @@ On start the bot creates whatever is missing, and never deletes anything:
   a 🎥 Theatre voice channel
 - **`/movienight film day time`**: the film from the library, a day (`tonight`, `friday`,
   `2026-10-31`) and a time (`8pm`, `20:00`). Creates a Discord event with the film's backdrop
-  and posts an announcement with the poster and SyncPlay steps
+  and posts an announcement with the poster and SyncPlay steps. **SyncPlay does not open the film
+  for the others**: everyone opens the same film, joins the group, then playback stays in sync
 - **`/movievote`**: a Discord poll of up to four films, random ones if none are given
 
 Names in [movie_night.py](movie_night.py) are the source of truth. Rename a role there, not in

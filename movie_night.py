@@ -360,7 +360,8 @@ def register(bot: discord.Client, jf):
             channel=theatre,
             privacy_level=discord.PrivacyLevel.guild_only,
             description=(f"{overview[:600]}\n\n" if overview else "")
-            + f"Watch together in Jellyfin with SyncPlay and talk along in {VOICE_CHANNEL}.",
+            + "Open this film in Jellyfin yourself (SyncPlay won't open it for you), join the "
+            f"SyncPlay group, then press play. Talk along in {VOICE_CHANNEL}.",
             reason=f"/movienight by {interaction.user}",
             **({"image": backdrop} if backdrop else {}),
         )
@@ -377,10 +378,13 @@ def register(bot: discord.Client, jf):
         embed.add_field(name="Genre", value=genres[:100], inline=True)
         embed.add_field(
             name="How to watch together",
-            value=(f"1. Open {film_ref} in Jellyfin\n"
+            # Tested 2026-10-22: SyncPlay does not open the film for the others.
+            # Everyone has to be on the same film before playback is synced.
+            value=(f"1. **Everyone** opens {film_ref} in Jellyfin. SyncPlay won't open it for you\n"
                    f"2. Tap **SyncPlay** (the group icon at the top) and join "
                    f"**{interaction.user.display_name}**'s group, or start one if you're first\n"
-                   f"3. Hop into {theatre.mention} to talk along\n"
+                   f"3. Once everyone's in, press play: pausing and seeking stay in sync\n"
+                   f"4. Hop into {theatre.mention} to talk along\n"
                    f"Press **Interested** on the event to get a reminder."),
             inline=False,
         )
