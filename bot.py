@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 import aiohttp
 import os
 import asyncio
@@ -932,6 +933,36 @@ async def check_sessions():
     except Exception as e:
         print(f"Error checking sessions: {e}")
 
+
+# --- Owner-only commands ----------------------------------------------------
+# For the server owner (or the bot application's owner) only. default_permissions
+# hides them from everyone without Administrator in the command list; the check
+# refuses anyone else who calls them anyway.
+async def _is_owner(interaction: discord.Interaction) -> bool:
+    if interaction.guild and interaction.user.id == interaction.guild.owner_id:
+        return True
+    return await bot.is_owner(interaction.user)
+
+
+def owner_only():
+    def decorate(func):
+        func = app_commands.check(_is_owner)(func)
+        return app_commands.default_permissions(administrator=True)(func)
+    return decorate
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        message = "That command is for the server owner only."
+    else:
+        print(f"Command error in /{interaction.command.name if interaction.command else '?'}: {error}")
+        message = "Something went wrong running that command."
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+    else:
+        await interaction.response.send_message(message, ephemeral=True)
+
 @bot.tree.command(name="jf-health", description="Show server health and resource usage")
 async def health_command(interaction: discord.Interaction):
     """Slash command to check server health"""
@@ -1482,7 +1513,8 @@ async def subscriptions_command(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {e}")
 
-@bot.tree.command(name="jf-weekly-digest", description="Generate and send weekly digest immediately")
+@bot.tree.command(name="jf-weekly-digest", description="(Owner) Post the weekly digest now")
+@owner_only()
 async def weekly_digest_command(interaction: discord.Interaction):
     """Manually trigger the weekly digest"""
     await interaction.response.defer()
@@ -1535,7 +1567,8 @@ async def achievements_command(interaction: discord.Interaction, user_name: str 
         await interaction.followup.send(f"❌ Error: {e}")
 
 
-@bot.tree.command(name="jf-achievements-all", description="(Admin) List recent achievements across users")
+@bot.tree.command(name="jf-achievements-all", description="(Owner) List recent achievements across users")
+@owner_only()
 async def achievements_all_command(interaction: discord.Interaction, limit: int = 50):
     await interaction.response.defer()
 
@@ -1655,7 +1688,8 @@ async def streaks_leaderboard_command(interaction: discord.Interaction, limit: i
         await interaction.followup.send(f"❌ Error: {e}")
 
 
-@bot.tree.command(name="jf-debug-sessions", description="(Admin) Show unclosed watch sessions in database")
+@bot.tree.command(name="jf-debug-sessions", description="(Owner) Show unclosed watch sessions in database")
+@owner_only()
 async def debug_sessions_command(interaction: discord.Interaction, limit: int = 20):
     """Debug command to show sessions without end_time"""
     await interaction.response.defer()
@@ -1732,7 +1766,7 @@ async def help_command(interaction: discord.Interaction):
         name="📈 Analytics",
         value=(
             "`/jf-stats-graph [days]` - Show watch time charts (default: 7 days)\n"
-            "`/jf-weekly-digest` - Generate and send weekly digest immediately"
+            "`/jf-weekly-digest` - (Owner) Post the weekly digest now"
         ),
         inline=False
     )
@@ -1753,7 +1787,7 @@ async def help_command(interaction: discord.Interaction):
         name="🏆 Achievements & Streaks",
         value=(
             "`/jf-achievements [user]` - List achievements for a user\n"
-            "`/jf-achievements-all [limit]` - (Admin) List recent achievements\n"
+            "`/jf-achievements-all [limit]` - (Owner) List recent achievements\n"
             "`/jf-streaks [user]` - Show your watch streak\n"
             "`/jf-streaks-leaderboard [limit]` - View streak leaderboard"
         ),
@@ -1762,7 +1796,7 @@ async def help_command(interaction: discord.Interaction):
 
     # Debug Commands
     embed.add_field(
-        name="🔧 Debug (Admin)",
+        name="🔧 Owner only",
         value=(
             "`/jf-debug-sessions [limit]` - Show unclosed watch sessions"
         ),
