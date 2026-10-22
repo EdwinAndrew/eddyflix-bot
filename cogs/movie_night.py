@@ -125,8 +125,8 @@ def parse_time(text: str):
     return hour, minute
 
 
-def parse_when(day: str, at: str) -> datetime:
-    now = datetime.now(TZ)
+def parse_when(day: str, at: str, now: datetime | None = None) -> datetime:
+    now = now or datetime.now(TZ)
     date, is_weekday = parse_day(day, now)
     hour, minute = parse_time(at)
     when = datetime(date.year, date.month, date.day, hour, minute, tzinfo=TZ)

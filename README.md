@@ -95,13 +95,18 @@ and has set up the database and the movie night channels. Each cog with a loop l
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest -q    # the tests CI runs
 cp .env.example .env    # fill in, then:
 set -a; . ./.env; set +a; python bot.py
 ```
 
-**Releasing:** merge to `main`, then tag `vX.Y.Z` and push the tag. The workflow builds the image,
-checks that the bot imports, and publishes `X.Y.Z` (and `sha-…` for every `main` commit). The
+**Tests** live in `tests/`: time parsing, the role picker, streaks and achievements against a
+throwaway database, and the command set. CI runs them on every push and pull request, before
+anything is built.
+
+**Releasing:** merge to `main`, then tag `vX.Y.Z` and push the tag. The workflow runs the tests,
+builds the image, checks that the bot imports, and publishes `X.Y.Z` (and `sha-…` for every `main` commit). The
 server pins a version, so nothing changes there until its compose file moves to the new tag.
 
 ## History

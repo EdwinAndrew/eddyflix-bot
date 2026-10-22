@@ -165,11 +165,15 @@ async def record_watch_end(jf, session_id: str, item_id: str):
 
                 await db.commit()
 
-async def update_streak(user_name: str, db):
-    """Update user's watch streak and check for milestone achievements"""
+async def update_streak(user_name: str, db, today=None):
+    """Update user's watch streak and check for milestone achievements.
+
+    today is a datetime.date; it defaults to the real date and exists for tests.
+    """
     from datetime import date, timedelta
-    
-    today = date.today().isoformat()
+
+    day = today or date.today()
+    today = day.isoformat()
     
     # Get current streak info
     async with db.execute("""
@@ -186,7 +190,7 @@ async def update_streak(user_name: str, db):
             return  # Already counted for today
         
         # Check if streak continues (watched yesterday)
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday = (day - timedelta(days=1)).isoformat()
         if last_watch_date == yesterday:
             # Continue streak
             new_streak = current_streak + 1
