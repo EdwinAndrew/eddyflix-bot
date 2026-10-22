@@ -6,3 +6,6 @@ Pillow==13.0.0
 psutil==7.2.2
 matplotlib==3.11.2
 aiosqlite==0.22.1
+# Python 3.13 removed audioop, which discord.py still imports for its voice player
+# (the bot uses no voice). This is the drop-in replacement.
+audioop-lts==0.2.2

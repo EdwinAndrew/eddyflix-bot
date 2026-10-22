@@ -1,5 +1,6 @@
 """Watch history, streaks and achievements, against a throwaway SQLite database."""
 import asyncio
+import re
 from datetime import date, datetime, timedelta
 
 import aiosqlite
@@ -136,3 +137,11 @@ def test_start_and_end_record_duration_and_popularity(db_path):
     (duration,), = _fetch(db_path, "SELECT duration_seconds FROM watch_history")
     assert 89 * 60 <= duration <= 91 * 60
     assert _fetch(db_path, "SELECT item_name, watch_count FROM popular_content") == [("1917", 1)]
+
+
+def test_timestamps_keep_the_stored_format(db_path):
+    session = {"UserName": "eddy", "NowPlayingItem": {"Id": "m1", "Name": "1917", "Type": "Movie"}}
+    asyncio.run(watch_data.record_watch_start("sess", session))
+    (start,), = _fetch(db_path, "SELECT start_time FROM watch_history")
+    # Same as rows written before Python 3.12: a space between date and time.
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?", start), start
