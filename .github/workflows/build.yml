@@ -49,9 +49,10 @@ jobs:
           cache-to: type=gha,mode=max
 
       # Importing runs all module-level setup (commands, movie night roles list)
-      # without connecting to Discord, which only happens under __main__.
+      # without connecting to Discord, which only happens under __main__. Drawing
+      # every tier badge checks that assets/ made it into the image.
       - name: The bot imports
-        run: docker run --rm --entrypoint python eddyflix-bot:test -c "import bot; from cogs import movie_night; print('ok:', len(movie_night.FLAIRS), 'flairs')"
+        run: docker run --rm --entrypoint python eddyflix-bot:test -c "import bot, tiers; from cogs import movie_night; [tiers.badge_png(t.key) for t in tiers.TIERS]; print('ok:', len(movie_night.FLAIRS), 'flairs,', len(tiers.TIERS), 'badges')"
 
       - name: Tags
         id: meta

@@ -12,6 +12,7 @@ from discord.ext import commands, tasks
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+import tiers
 from checks import owner_only
 
 
@@ -206,6 +207,8 @@ class Digest(commands.Cog):
                 for user, ach_type, ach_name, item_name, value, earned_at in new_achievements:
                     if ach_type == 'series_completion':
                         achievements_text += f"🎉 **{user}** finished \"{item_name}\"!\n"
+                    elif ach_type == 'watch_milestone' and (tier := tiers.tier_for(value)):
+                        achievements_text += f"{tier.emoji} **{user}** reached **{tier.name}**: {value:,} hours watched!\n"
                     elif ach_type == 'watch_milestone':
                         achievements_text += f"🏅 **{user}** reached **{value} hours** watched!\n"
                 if achievements_text:
@@ -216,6 +219,19 @@ class Digest(commands.Cog):
 
             # Send individual achievement badges/messages for visibility
             for user, ach_type, ach_name, item_name, value, earned_at in new_achievements:
+                tier = tiers.tier_for(value) if ach_type == 'watch_milestone' else None
+                if tier:
+                    try:
+                        file = tiers.badge_file(tier)
+                        ach_embed = discord.Embed(
+                            title=f"{tier.emoji} {user} reached {tier.name}",
+                            description=f"**{value:,} hours** watched on EddyFlix",
+                            colour=tier.colour)
+                        ach_embed.set_image(url=f"attachment://{file.filename}")
+                        await activity_channel.send(embed=ach_embed, file=file)
+                    except Exception as e:
+                        print(f"Error sending tier badge for {user}: {e}")
+                    continue
                 try:
                     badge_buf = generate_badge(ach_name, f"{user}")
                     badge_buf.seek(0)

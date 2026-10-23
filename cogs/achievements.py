@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import config
+import tiers
 import watch_data
 from checks import is_owner, owner_only
 
@@ -30,18 +31,35 @@ def earned_unix(earned_at) -> int | None:
     return int(dt.timestamp())
 
 
-def achievement_card(user_name: str, summary: dict, linked: bool, limit: int = 20) -> discord.Embed:
-    """One compact embed: watch time, streak, finished series."""
-    embed = discord.Embed(title=f"🏅 {user_name}", colour=discord.Colour.gold())
+def watch_time_field(hours: float) -> str:
+    """The tier, hours, a bar to the next tier, and the tiers collected so far."""
+    tier, nxt = tiers.current_tier(hours), tiers.next_tier(hours)
+    lines = [f"{tier.emoji} **{tier.name}**" if tier else "No tier yet",
+             f"**{hours:,.0f} h** watched"]
+    if nxt:
+        lines.append(f"`{tiers.progress_bar(hours)}`")
+        lines.append(f"Next: {nxt.emoji} {nxt.name} in {nxt.hours - hours:,.0f} h")
+    else:
+        lines.append("Every tier collected")
+    collected = [t.emoji for t in tiers.TIERS if hours >= t.hours]
+    if len(collected) > 1:
+        lines.append(" ".join(collected))
+    return "\n".join(lines)
 
-    earned = summary["hour_milestones"]
-    hours_line = f"**{summary['hours']:,.0f} h** watched"
-    if earned:
-        hours_line += "\n" + " · ".join(f"**{v:,}**" if v == earned[-1] else f"{v:,}" for v in earned) + " h"
-    upcoming = [m for m in config.ACHIEVEMENT_MILESTONES if m not in earned and m > summary["hours"]]
-    if upcoming:
-        hours_line += f"\nNext: {upcoming[0]:,} h ({upcoming[0] - summary['hours']:,.0f} to go)"
-    embed.add_field(name="⏱️ Watch time", value=hours_line, inline=True)
+
+def achievement_card(user_name: str, summary: dict, linked: bool,
+                     limit: int = 20) -> tuple[discord.Embed, discord.File | None]:
+    """One compact embed: watch time, streak, finished series. The current
+    tier's badge comes with it as a file, shown in the corner."""
+    tier = tiers.current_tier(summary["hours"])
+    embed = discord.Embed(title=f"🏅 {user_name}",
+                          colour=discord.Colour(tier.colour) if tier else discord.Colour.dark_grey())
+    badge = None
+    if tier:
+        badge = tiers.badge_file(tier, 256)
+        embed.set_thumbnail(url=f"attachment://{badge.filename}")
+
+    embed.add_field(name="⏱️ Watch time", value=watch_time_field(summary["hours"]), inline=True)
 
     if summary["streak"]:
         current, best = summary["streak"]
@@ -71,7 +89,7 @@ def achievement_card(user_name: str, summary: dict, linked: bool, limit: int = 2
 
     if not linked:
         embed.set_footer(text="Shown for your Discord name. Use /jf-link to connect your Jellyfin user.")
-    return embed
+    return embed, badge
 
 
 class Achievements(commands.Cog):
@@ -98,7 +116,8 @@ class Achievements(commands.Cog):
                 hint = "" if linked else "\nIs your Jellyfin name different? Link it with `/jf-link`."
                 await interaction.followup.send(f"No watch history for **{user_name}** yet.{hint}")
                 return
-            await interaction.followup.send(embed=achievement_card(user_name, summary, linked, limit))
+            embed, badge = achievement_card(user_name, summary, linked, limit)
+            await interaction.followup.send(embed=embed, **({"file": badge} if badge else {}))
 
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}")
@@ -154,7 +173,8 @@ class Achievements(commands.Cog):
             for user in users[:limit]:
                 summary = await watch_data.achievement_summary(user)
                 best = summary["streak"][1] if summary["streak"] else 0
-                lines.append(f"**{user}** · {summary['hours']:,.0f} h · best streak {best} d · "
+                tier = tiers.current_tier(summary["hours"])
+                lines.append(f"{tier.emoji if tier else '▫️'} **{user}** · {summary['hours']:,.0f} h · best streak {best} d · "
                              f"{len(summary['series'])} series finished")
             embed = discord.Embed(title="🏆 Achievements, everyone", description="\n".join(lines)[:4000],
                                   colour=discord.Colour.gold())

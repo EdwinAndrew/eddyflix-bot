@@ -8,13 +8,6 @@ DASHBOARD_CHANNEL_ID = int(os.getenv("DASHBOARD_CHANNEL_ID", "0"))
 ACTIVITY_CHANNEL_ID = int(os.getenv("ACTIVITY_CHANNEL_ID", "0"))
 UPDATE_INTERVAL = int(os.getenv("UPDATE_INTERVAL", "60"))
 
-# Achievement thresholds configurable via env var (comma-separated hours)
-ACHIEVEMENT_THRESHOLDS = os.getenv('ACHIEVEMENT_THRESHOLDS', '10,50,100,250,500,1000')
-try:
-    ACHIEVEMENT_MILESTONES = [int(x) for x in ACHIEVEMENT_THRESHOLDS.split(',') if x.strip()]
-except Exception:
-    ACHIEVEMENT_MILESTONES = [10, 50, 100, 250, 500, 1000]
-
 # Uptime Kuma has no Docker socket, so it cannot see the container's health
 # status. Each good heartbeat also hits a Kuma Push monitor, which alerts when
 # the pushes stop. Optional: empty means file only.
