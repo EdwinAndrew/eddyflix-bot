@@ -5,6 +5,7 @@ from datetime import datetime
 import aiosqlite
 
 import config
+import tiers
 
 # Python 3.12 deprecated sqlite3's built-in datetime adapter. This registers the
 # same conversion explicitly, so timestamps keep the format already in the
@@ -309,7 +310,7 @@ async def check_achievements(jf, user_name: str, series_name: str, item_name: st
         if result and result[0]:
             total_hours = result[0] / 3600
             
-            for milestone in config.ACHIEVEMENT_MILESTONES:
+            for milestone in tiers.MILESTONES:
                 if total_hours >= milestone:
                     async with db.execute("""
                         SELECT id FROM achievements
@@ -319,7 +320,7 @@ async def check_achievements(jf, user_name: str, series_name: str, item_name: st
                             await db.execute("""
                                 INSERT INTO achievements (user_name, achievement_type, achievement_name, value)
                                 VALUES (?, ?, ?, ?)
-                            """, (user_name, 'watch_milestone', f'Watched {milestone} Hours', milestone))
+                            """, (user_name, 'watch_milestone', f'{tiers.tier_for(milestone).name}: {milestone:,} hours', milestone))
 
 
 # --- One-off fixes -----------------------------------------------------------

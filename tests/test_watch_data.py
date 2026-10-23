@@ -130,7 +130,7 @@ def test_hour_milestones_awarded_once_each(db_path):
     add_episodes(db_path, 24, hours_each=0.5)          # 12 hours
     check(db_path, FakeJellyfin(episodes=100))
     check(db_path, FakeJellyfin(episodes=100))
-    assert achievements(db_path, "watch_milestone") == [("Watched 10 Hours", 10)]
+    assert achievements(db_path, "watch_milestone") == [("Corn: 10 hours", 10)]
 
 
 def test_start_and_end_record_duration_and_popularity(db_path):

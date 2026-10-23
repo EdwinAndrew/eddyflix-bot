@@ -14,7 +14,7 @@ Feature work and bugs are tracked in the
 | **Dashboard** | One message in a channel, edited every minute: server status and active streams |
 | **Activity feed** | Connections, playback starts, switches and stops with posters, and a warning at three transcodes. Two or more people on the same title at about the same point get one **🍿 Watching together** post instead, edited as people join and turned into **🎬 Watched together** at the end |
 | **Weekly digest** | Sundays at 6 PM: watch time, top shows, who watched most |
-| **Achievements and streaks** | Hours-watched milestones, finished series (every episode in the library watched), daily watch streaks. `/jf-achievements` shows them as one card; `/jf-link` ties a Discord member to their Jellyfin user |
+| **Achievements and streaks** | Watch-time tiers with badges, popcorn from the cob up: Corn at 10 h, Kernel 50, Popping 100, Popcorn 250, Salted 500, Buttery Popcorn 1,000; finished series (every episode in the library watched), daily watch streaks. `/jf-achievements` shows them as one card; `/jf-link` ties a Discord member to their Jellyfin user |
 | **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`. See below |
 | **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push |
 
@@ -87,6 +87,7 @@ All settings are in [.env.example](.env.example).
 | `watch_data.py` | The SQLite database: recording plays, streaks, achievements |
 | `checks.py` | The owner-only check and the slash-command error handler |
 | `parties.py` | Working out watch parties from Jellyfin's sessions |
+| `tiers.py` | Watch-time tiers and drawing their badges. Art in `assets/`, licences in [assets/LICENSES.md](assets/LICENSES.md) |
 | `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions`, `achievements`, `movie_night`, `help` |
 
 Background loops start when the bot dispatches `services_ready`, ten seconds after it connects
