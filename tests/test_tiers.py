@@ -9,14 +9,14 @@ import tiers
 
 def test_tiers_and_milestones():
     assert tiers.MILESTONES == [10, 50, 100, 250, 500, 1000]
-    assert [t.name for t in tiers.TIERS] == ["Corn", "Kernel", "Popping", "Popcorn", "Salted", "Buttery Popcorn"]
-    assert tiers.tier_for(100).name == "Popping"
+    assert [t.name for t in tiers.TIERS] == ["Corn", "Kernel", "Popcorn", "Salted", "Buttery Popcorn", "Bottomless Bucket"]
+    assert tiers.tier_for(100).name == "Popcorn"
     assert tiers.tier_for(42) is None
 
 
 @pytest.mark.parametrize("hours, current, nxt", [
     (0, None, "Corn"), (9.9, None, "Corn"), (10, "Corn", "Kernel"),
-    (249, "Popping", "Popcorn"), (999, "Salted", "Buttery Popcorn"), (5000, "Buttery Popcorn", None),
+    (249, "Popcorn", "Salted"), (999, "Buttery Popcorn", "Bottomless Bucket"), (5000, "Bottomless Bucket", None),
 ])
 def test_current_and_next(hours, current, nxt):
     assert getattr(tiers.current_tier(hours), "name", None) == current
@@ -26,7 +26,7 @@ def test_current_and_next(hours, current, nxt):
 def test_progress_bar_runs_between_tiers():
     assert tiers.progress_bar(0) == "▱" * 10
     assert tiers.progress_bar(5) == "▰" * 5 + "▱" * 5          # halfway to Corn
-    assert tiers.progress_bar(75) == "▰" * 5 + "▱" * 5         # halfway from Kernel to Popping
+    assert tiers.progress_bar(75) == "▰" * 5 + "▱" * 5         # halfway from Kernel to Popcorn
     assert tiers.progress_bar(1500) == "▰" * 10
 
 
@@ -50,13 +50,13 @@ def test_emoji_pngs_fit_discord():
 
 
 def test_icons_use_uploaded_emojis_when_there():
-    salted = tiers.tier_for(500)
+    salted = tiers.tier_for(250)
     tiers.set_emoji_tags({})
     assert tiers.icon(salted) == "🧂" and tiers.icon(salted, locked=True) == "▫️"
     tiers.set_emoji_tags({tiers.emoji_name(t, l): f"<{t.key}{'-' if l else ''}>"
                           for t in tiers.TIERS for l in (False, True)})
     try:
         assert tiers.icon(salted) == "<salted>"
-        assert tiers.collection(100) == "<corn><kernel><popping><popcorn-><salted-><buttery->"
+        assert tiers.collection(100) == "<corn><kernel><popcorn><salted-><buttery-><bottomless->"
     finally:
         tiers.set_emoji_tags({})

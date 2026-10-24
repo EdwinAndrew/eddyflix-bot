@@ -21,7 +21,7 @@ def fields(embed):
 def test_card_groups_everything_in_three_fields():
     shown = fields(card(SUMMARY))
     assert shown["⏱️ Watch time"].splitlines() == [
-        "🧂 **Salted** · 512 h", "▱▱▱▱▱▱▱▱▱▱", "Next: Buttery Popcorn in 488 h", "🌽🟡💥🍿🧂▫️"]
+        "🧈 **Buttery Popcorn** · 512 h", "▱▱▱▱▱▱▱▱▱▱", "Next: Bottomless Bucket in 488 h", "🌽🟡🍿🧂🧈▫️"]
     assert shown["🔥 Streak"] == "Current **2** · Best **7** days\n🏅 7-day"
     series = shown["📺 Finished series (2)"].splitlines()
     assert series[0].startswith("**Breaking Bad** · 62/62 episodes · <t:")
@@ -30,8 +30,8 @@ def test_card_groups_everything_in_three_fields():
 
 def test_current_tier_badge_in_the_corner():
     embed, badge = achievement_card("eddy", SUMMARY, linked=True)
-    assert badge.filename == "tier-salted.png"
-    assert embed.thumbnail.url == "attachment://tier-salted.png"
+    assert badge.filename == "tier-buttery.png"
+    assert embed.thumbnail.url == "attachment://tier-buttery.png"
     assert embed.colour.value == 0x5CC8FF
 
 
