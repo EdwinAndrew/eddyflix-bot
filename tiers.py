@@ -1,4 +1,4 @@
-"""Watch-time tiers, from Corn at 10 h to Buttery Popcorn at 1,000 h, and their badges.
+"""Watch-time tiers, from Corn at 10 h to Bottomless Bucket at 1,000 h, and their badges.
 
 Badges are drawn here with Pillow: a rosette in the tier's metal (bronze, silver,
 gold, platinum, diamond, then a purple legend finish) with a 3D icon in the
@@ -39,10 +39,10 @@ class Tier:
 TIERS = [
     Tier(10, "corn", "Corn", "🌽", ("#F6CFA8", "#C27A44", "#5E3116"), "#C27A44", 12, "corn"),
     Tier(50, "kernel", "Kernel", "🟡", ("#FFFFFF", "#BFC8D2", "#5C6672"), "#BFC8D2", 14, "kernel"),
-    Tier(100, "popping", "Popping", "💥", ("#FFF6C2", "#F2BE32", "#8A5A00"), "#F2BE32", 16, "collision"),
-    Tier(250, "popcorn", "Popcorn", "🍿", ("#F2FFFD", "#9FE3DC", "#2F6F78"), "#7FE0D6", 18, "popcorn"),
-    Tier(500, "salted", "Salted", "🧂", ("#EAF9FF", "#5CC8FF", "#1A4DB3"), "#4FB8FF", 20, "popcorn", "salt"),
-    Tier(1000, "buttery", "Buttery Popcorn", "🧈", ("#FFE08A", "#D2338A", "#3A0A5E"), "#B04DFF", 24, "popcorn", "butter"),
+    Tier(100, "popcorn", "Popcorn", "🍿", ("#FFF6C2", "#F2BE32", "#8A5A00"), "#F2BE32", 16, "popcorn"),
+    Tier(250, "salted", "Salted", "🧂", ("#F2FFFD", "#9FE3DC", "#2F6F78"), "#7FE0D6", 18, "popcorn", "salt"),
+    Tier(500, "buttery", "Buttery Popcorn", "🧈", ("#EAF9FF", "#5CC8FF", "#1A4DB3"), "#4FB8FF", 20, "popcorn", "butter"),
+    Tier(1000, "bottomless", "Bottomless Bucket", "♾️", ("#FFE08A", "#D2338A", "#3A0A5E"), "#B04DFF", 24, "popcorn", "infinity"),
 ]
 MILESTONES = [t.hours for t in TIERS]
 _BY_HOURS = {t.hours: t for t in TIERS}
@@ -212,7 +212,7 @@ def _render(tier: Tier, size: int) -> Image.Image:
         img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(S * 0.012)))
         img.alpha_composite(icon, (x, y))
 
-    # Salted and Buttery Popcorn get sparkles on the rim
+    # Buttery Popcorn and Bottomless Bucket get sparkles on the rim
     if tier.hours >= 500:
         d = ImageDraw.Draw(img)
         for ang, rr, s in ((-50, 0.42, 0.040), (205, 0.40, 0.030), (25, 0.36, 0.022), (140, 0.43, 0.026)):

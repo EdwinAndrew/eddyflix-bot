@@ -2,7 +2,7 @@
 
 | Files | From | Licence |
 |---|---|---|
-| `tiers/*.png` | [Fluent Emoji](https://github.com/microsoft/fluentui-emoji), 3D style: Ear of corn, Collision, Popcorn, Salt, Butter. The Kernel tier's kernels are drawn in `tiers.py` | MIT, © Microsoft Corporation |
+| `tiers/*.png` | [Fluent Emoji](https://github.com/microsoft/fluentui-emoji), 3D style: Ear of corn, Popcorn, Salt, Butter, Infinity. The Kernel tier's kernels are drawn in `tiers.py` | MIT, © Microsoft Corporation |
 | `fonts/BebasNeue-Regular.ttf` | [Bebas Neue](https://github.com/dharmatype/Bebas-Neue) via Google Fonts | SIL Open Font License 1.1, text in `fonts/OFL.txt` |
 
 ## MIT licence (Fluent Emoji)
