@@ -34,16 +34,13 @@ def earned_unix(earned_at) -> int | None:
 def watch_time_field(hours: float) -> str:
     """The tier, hours, a bar to the next tier, and the tiers collected so far."""
     tier, nxt = tiers.current_tier(hours), tiers.next_tier(hours)
-    lines = [f"{tier.emoji} **{tier.name}**" if tier else "No tier yet",
-             f"**{hours:,.0f} h** watched"]
+    lines = [f"{tiers.icon(tier)} **{tier.name}** · {hours:,.0f} h" if tier else f"**{hours:,.0f} h** watched"]
     if nxt:
-        lines.append(f"`{tiers.progress_bar(hours)}`")
-        lines.append(f"Next: {nxt.emoji} {nxt.name} in {nxt.hours - hours:,.0f} h")
+        lines.append(tiers.progress_bar(hours))
+        lines.append(f"Next: {nxt.name} in {nxt.hours - hours:,.0f} h")
     else:
         lines.append("Every tier collected")
-    collected = [t.emoji for t in tiers.TIERS if hours >= t.hours]
-    if len(collected) > 1:
-        lines.append(" ".join(collected))
+    lines.append(tiers.collection(hours))
     return "\n".join(lines)
 
 
@@ -92,9 +89,36 @@ def achievement_card(user_name: str, summary: dict, linked: bool,
     return embed, badge
 
 
+async def sync_tier_emojis(bot) -> dict[str, str]:
+    """Upload the tier badges as the bot's application emojis: create the
+    missing ones, delete old versions. Returns name -> "<:name:id>"."""
+    wanted = tiers.wanted_emojis()
+    have = {e.name: e for e in await bot.fetch_application_emojis()}
+    for name, emoji in have.items():
+        if name.startswith(tiers.EMOJI_PREFIXES) and name not in wanted:
+            await emoji.delete()
+    tags = {}
+    for name, image in wanted.items():
+        emoji = have.get(name) or await bot.create_application_emoji(name=name, image=image)
+        tags[name] = str(emoji)
+    return tags
+
+
 class Achievements(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.emojis_synced = False
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if self.emojis_synced:              # on_ready fires again after reconnects
+            return
+        try:
+            tiers.set_emoji_tags(await sync_tier_emojis(self.bot))
+            self.emojis_synced = True
+            print(f"Tier emojis ready ({len(tiers._tags)})")
+        except Exception as e:
+            print(f"Tier emojis failed, using plain ones: {e}")
 
     async def resolve_user(self, interaction: discord.Interaction, user_name: str | None) -> tuple[str, bool]:
         """Who to show: the name given, else the caller's linked Jellyfin user, else
@@ -174,7 +198,7 @@ class Achievements(commands.Cog):
                 summary = await watch_data.achievement_summary(user)
                 best = summary["streak"][1] if summary["streak"] else 0
                 tier = tiers.current_tier(summary["hours"])
-                lines.append(f"{tier.emoji if tier else '▫️'} **{user}** · {summary['hours']:,.0f} h · best streak {best} d · "
+                lines.append(f"{tiers.icon(tier) if tier else '▫️'} **{user}** · {summary['hours']:,.0f} h · best streak {best} d · "
                              f"{len(summary['series'])} series finished")
             embed = discord.Embed(title="🏆 Achievements, everyone", description="\n".join(lines)[:4000],
                                   colour=discord.Colour.gold())

@@ -6,6 +6,7 @@ middle and the tier's name on a ribbon. Icons are Microsoft's Fluent Emoji
 (MIT) except the kernels, which are drawn below. The font is Bebas Neue (OFL).
 Both are in assets/, with their licences in assets/LICENSES.md.
 """
+import hashlib
 import io
 import math
 from dataclasses import dataclass
@@ -251,6 +252,50 @@ def _render(tier: Tier, size: int) -> Image.Image:
     return img.resize((size, size), Image.LANCZOS)
 
 
+def _render_mini(tier: Tier, size: int) -> Image.Image:
+    """The emoji version: rosette and icon only, the icon as big as it fits.
+    Discord shows custom emojis at about 22 px inline, so no text."""
+    S = size * 4
+    c = S / 2
+    light, mid, dark = tier.metal
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    ros = _mask(S, lambda d: d.polygon(_rosette(S, tier.points, S * 0.50, S * 0.455), fill=255))
+    img.paste(_metal(S, light, mid, dark), (0, 0), ros)
+    r_face = S * 0.39
+    edge = _mask(S, lambda d: d.ellipse([c - r_face - S * 0.025] * 2 + [c + r_face + S * 0.025] * 2, fill=255))
+    img.paste(Image.new("RGBA", (S, S), dark), (0, 0), edge)
+    face = _mask(S, lambda d: d.ellipse([c - r_face] * 2 + [c + r_face] * 2, fill=255))
+    y, x = np.mgrid[0:S, 0:S].astype(np.float32)
+    k = np.clip(np.sqrt((x - c) ** 2 + (y - c * 0.75) ** 2) / r_face / 1.6, 0, 1)[..., None]
+    shade = _rgb(mid) * 0.38 * (1 - k) + np.array([14, 15, 22], np.float32) * k
+    img.paste(Image.fromarray(shade.astype(np.uint8), "RGB"), (0, 0), face)
+    isz = int(S * 0.62)
+    ix = iy = int(c - isz / 2)
+    img.alpha_composite(_icon(tier.icon, isz), (ix, iy))
+    if tier.extra:
+        esz = int(isz * 0.55)
+        img.alpha_composite(_icon(tier.extra, esz), (int(ix + isz - esz * 0.75), int(iy + isz - esz * 0.80)))
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def _locked(img: Image.Image) -> Image.Image:
+    """Greyed out and dimmed: a tier not reached yet."""
+    grey = img.convert("LA").convert("RGBA")
+    grey = Image.eval(grey.convert("RGB"), lambda v: int(v * 0.7)).convert("RGBA")
+    grey.putalpha(img.getchannel("A").point(lambda a: int(a * 0.75)))
+    return grey
+
+
+@lru_cache(maxsize=None)
+def emoji_png(tier_key: str, locked: bool = False, size: int = 128) -> bytes:
+    """The tier as a small square PNG for a Discord custom emoji (256 KB max)."""
+    tier = next(t for t in TIERS if t.key == tier_key)
+    img = _render_mini(tier, size)
+    buf = io.BytesIO()
+    (_locked(img) if locked else img).save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
 @lru_cache(maxsize=None)
 def badge_png(tier_key: str, size: int = 512) -> bytes:
     """The tier's badge as PNG bytes. Drawn once per size."""
@@ -264,3 +309,37 @@ def badge_file(tier: Tier, size: int = 512):
     """A discord.File of the badge, named so an embed can show it."""
     import discord
     return discord.File(io.BytesIO(badge_png(tier.key, size)), filename=f"tier-{tier.key}.png")
+
+
+# --- Custom emojis -------------------------------------------------------------
+# The bot uploads the small badges as its own application emojis at start-up
+# (cogs/achievements.py), so text can show the art inline. Until then, or if
+# the upload fails, text falls back to plain emojis.
+
+EMOJI_PREFIXES = ("tier_", "lock_")
+_tags: dict[str, str] = {}              # emoji name -> "<:name:id>"
+
+
+def emoji_name(tier: Tier, locked: bool = False) -> str:
+    """Named after the art, so changed art gets a fresh emoji."""
+    digest = hashlib.sha1(emoji_png(tier.key, locked)).hexdigest()[:6]
+    return f"{EMOJI_PREFIXES[locked]}{tier.key}_{digest}"
+
+
+def wanted_emojis() -> dict[str, bytes]:
+    return {emoji_name(t, locked): emoji_png(t.key, locked) for t in TIERS for locked in (False, True)}
+
+
+def set_emoji_tags(tags: dict[str, str]) -> None:
+    _tags.clear()
+    _tags.update(tags)
+
+
+def icon(tier: Tier, locked: bool = False) -> str:
+    """The tier's badge as an inline emoji, or its plain emoji as a fallback."""
+    return _tags.get(emoji_name(tier, locked)) or ("▫️" if locked else tier.emoji)
+
+
+def collection(hours: float) -> str:
+    """All six badges in a row: reached ones in colour, the rest greyed out."""
+    return "".join(icon(t, locked=hours < t.hours) for t in TIERS)

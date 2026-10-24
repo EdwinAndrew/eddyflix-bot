@@ -21,7 +21,7 @@ def fields(embed):
 def test_card_groups_everything_in_three_fields():
     shown = fields(card(SUMMARY))
     assert shown["⏱️ Watch time"].splitlines() == [
-        "🧂 **Salted**", "**512 h** watched", "`▱▱▱▱▱▱▱▱▱▱`", "Next: 🧈 Buttery Popcorn in 488 h", "🌽 🟡 💥 🍿 🧂"]
+        "🧂 **Salted** · 512 h", "▱▱▱▱▱▱▱▱▱▱", "Next: Buttery Popcorn in 488 h", "🌽🟡💥🍿🧂▫️"]
     assert shown["🔥 Streak"] == "Current **2** · Best **7** days\n🏅 7-day"
     series = shown["📺 Finished series (2)"].splitlines()
     assert series[0].startswith("**Breaking Bad** · 62/62 episodes · <t:")
@@ -45,7 +45,7 @@ def test_empty_parts():
                                             "series": [], "streak": None}, linked=True)
     shown = fields(embed)
     assert badge is None and embed.thumbnail.url is None
-    assert shown["⏱️ Watch time"].splitlines()[0] == "No tier yet"
+    assert shown["⏱️ Watch time"].splitlines() == ["**0 h** watched", "▱▱▱▱▱▱▱▱▱▱", "Next: Corn in 10 h", "▫️" * 6]
     assert shown["🔥 Streak"] == "No streak yet"
     assert shown["📺 Finished series (0)"] == "None yet"
 

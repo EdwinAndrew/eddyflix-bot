@@ -36,3 +36,27 @@ def test_every_badge_draws(tier):
     assert img.size == (128, 128) and img.mode == "RGBA"
     assert img.getpixel((64, 64))[3] == 255            # solid in the middle
     assert img.getpixel((0, 0))[3] == 0                # see-through in the corner
+
+
+def test_emoji_pngs_fit_discord():
+    for t in tiers.TIERS:
+        for locked in (False, True):
+            png = tiers.emoji_png(t.key, locked)
+            assert len(png) < 256 * 1024
+            assert Image.open(io.BytesIO(png)).size == (128, 128)
+            name = tiers.emoji_name(t, locked)
+            assert 2 <= len(name) <= 32 and name.replace("_", "").isalnum()
+    assert len(set(tiers.wanted_emojis())) == 12
+
+
+def test_icons_use_uploaded_emojis_when_there():
+    salted = tiers.tier_for(500)
+    tiers.set_emoji_tags({})
+    assert tiers.icon(salted) == "🧂" and tiers.icon(salted, locked=True) == "▫️"
+    tiers.set_emoji_tags({tiers.emoji_name(t, l): f"<{t.key}{'-' if l else ''}>"
+                          for t in tiers.TIERS for l in (False, True)})
+    try:
+        assert tiers.icon(salted) == "<salted>"
+        assert tiers.collection(100) == "<corn><kernel><popping><popcorn-><salted-><buttery->"
+    finally:
+        tiers.set_emoji_tags({})
