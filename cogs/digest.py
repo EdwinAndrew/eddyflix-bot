@@ -208,7 +208,7 @@ class Digest(commands.Cog):
                     if ach_type == 'series_completion':
                         achievements_text += f"🎉 **{user}** finished \"{item_name}\"!\n"
                     elif ach_type == 'watch_milestone' and (tier := tiers.tier_for(value)):
-                        achievements_text += f"{tier.emoji} **{user}** reached **{tier.name}**: {value:,} hours watched!\n"
+                        achievements_text += f"{tiers.icon(tier)} **{user}** reached **{tier.name}**: {value:,} hours watched!\n"
                     elif ach_type == 'watch_milestone':
                         achievements_text += f"🏅 **{user}** reached **{value} hours** watched!\n"
                 if achievements_text:
@@ -224,7 +224,7 @@ class Digest(commands.Cog):
                     try:
                         file = tiers.badge_file(tier)
                         ach_embed = discord.Embed(
-                            title=f"{tier.emoji} {user} reached {tier.name}",
+                            title=f"{user} reached {tier.name}",
                             description=f"**{value:,} hours** watched on EddyFlix",
                             colour=tier.colour)
                         ach_embed.set_image(url=f"attachment://{file.filename}")
