@@ -1,6 +1,6 @@
 # Pinned by version and digest so two builds of one commit are the same image.
 # Dependabot proposes newer ones. Keep CI's python-version (build.yml) in step.
-FROM python:3.13.16-slim@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
+FROM python:3.15.0-slim@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58
 
 WORKDIR /app
 
