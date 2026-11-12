@@ -37,6 +37,7 @@ class Help(commands.Cog):
         embed.add_field(
             name="🎬 Content Discovery",
             value=(
+                "`/watch <title>` - Find a film or show, get a link and where you left off\n"
                 "`/jf-recent` - Show recently added content\n"
                 "`/jf-popular [limit]` - Show most popular content by watch time"
             ),

@@ -22,6 +22,7 @@ EXTENSIONS = [
     "cogs.subscriptions",
     "cogs.achievements",
     "cogs.movie_night",
+    "cogs.watch",
     "cogs.help",
 ]
 
