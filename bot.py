@@ -20,6 +20,7 @@ EXTENSIONS = [
     "cogs.activity",
     "cogs.digest",
     "cogs.weekly_new",
+    "cogs.admin",
     "cogs.server",
     "cogs.subscriptions",
     "cogs.achievements",
@@ -55,6 +56,7 @@ class EddyFlixBot(commands.Bot):
         print(f'Bot connected as {self.user}')
         print(f'Dashboard channel: {config.DASHBOARD_CHANNEL_ID}')
         print(f'Activity channel: {config.ACTIVITY_CHANNEL_ID}')
+        print(f'Admin channel: {config.ADMIN_CHANNEL_ID}')
 
         await watch_data.init_database()
         if self.jf:

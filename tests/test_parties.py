@@ -110,8 +110,12 @@ def feed(tmp_path, monkeypatch):
     asyncio.run(watch_data.init_database())
     jf, channel = Jellyfin(), Channel()
     cog = Activity(SimpleNamespace(jf=jf, get_channel=lambda _id: channel))
+    clock = [datetime(2026, 10, 22, 20, 0)]
+    cog.now = lambda: clock[0]
 
-    def poll(*sessions):
+    def poll(*sessions, after=0.5):
+        """One session poll, `after` minutes after the last."""
+        clock[0] += timedelta(minutes=after)
         jf.sessions = list(sessions)
         asyncio.run(cog.check_sessions.coro(cog))
         return [m.embeds[0].title for m in channel.messages]
@@ -133,16 +137,38 @@ def test_a_watch_party_from_start_to_end(feed):
     assert "**eddy**, **Kevin** and **Sarah**" in party_post.edits[-1].description
     assert len(channel.messages) == 1                                       # Kevin joining edits it
 
+    poll(session("a", "eddy", minutes=30), session("b", "Sarah", minutes=30),
+         session("c", "Kevin", minutes=30), after=29)
     titles = poll(idle("a", "eddy"), idle("b", "Sarah"), idle("c", "Kevin"))
     assert party_post.edits[-1].title == "🎬 Watched together"
-    assert "⏹️ Playback Stopped" not in titles                              # no stop posts for the party
+    assert titles == ["🍿 Watching together"]                               # no posts of their own
 
 
-def test_someone_watching_alone_still_gets_their_own_post(feed):
+def test_someone_watching_alone_gets_one_post_edited_in_place(feed):
     poll, channel = feed
     poll(idle("a", "eddy"))
-    assert poll(session("a", "eddy")) == ["▶️ Playback Started"]
-    assert poll(idle("a", "eddy")) == ["▶️ Playback Started", "⏹️ Playback Stopped"]
+    assert poll(session("a", "eddy")) == []                                 # not yet: might be a sample
+    assert poll(session("a", "eddy"), after=6) == ["▶️ Now watching"]
+    assert poll(idle("a", "eddy"), after=30) == ["▶️ Now watching"]       # no second post...
+    assert channel.messages[0].edits[-1].title == "⏹️ Watched"             # ...it says they stopped
+
+
+def test_connecting_and_disconnecting_is_not_posted(feed):
+    poll, channel = feed
+    poll()
+    poll(idle("a", "eddy"))
+    poll()
+    assert channel.messages == []
+
+
+def test_a_short_play_is_not_posted(feed):
+    poll, channel = feed
+    poll(idle("a", "eddy"))
+    poll(session("a", "eddy"))
+    poll(session("a", "eddy"), after=2)
+    poll(idle("a", "eddy"))
+    poll(idle("a", "eddy"), after=30)
+    assert channel.messages == []
 
 
 def test_a_party_already_running_at_start_is_tracked_quietly(feed):

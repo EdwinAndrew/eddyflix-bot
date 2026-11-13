@@ -5,7 +5,7 @@ signed-in user and answers an API key with 400, and sessions carry no group id.
 So a party is worked out from the sessions instead. SyncPlay keeps its members
 within seconds of each other, and people who just press play together count too.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import discord
 
@@ -76,11 +76,15 @@ def live_embed(item, users, started: datetime) -> discord.Embed:
     return embed
 
 
+def length_text(length: timedelta) -> str:
+    """"2h 03m", or "45m" under an hour. Never less than a minute."""
+    minutes = max(1, int(length.total_seconds() // 60))
+    return f"{minutes // 60}h {minutes % 60:02d}m" if minutes >= 60 else f"{minutes}m"
+
+
 def ended_embed(item, users, started: datetime, ended: datetime) -> discord.Embed:
-    minutes = max(1, int((ended - started).total_seconds() // 60))
-    length = f"{minutes // 60}h {minutes % 60:02d}m" if minutes >= 60 else f"{minutes}m"
     return discord.Embed(
         title="🎬 Watched together",
-        description=f"{join_names(users)} watched **{title_of(item)}** together, for {length}",
+        description=f"{join_names(users)} watched **{title_of(item)}** together, for {length_text(ended - started)}",
         colour=COLOUR,
     )

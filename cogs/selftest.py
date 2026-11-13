@@ -150,6 +150,11 @@ class SelfTest(commands.Cog):
         activity = self.bot.get_channel(config.ACTIVITY_CHANNEL_ID) if config.ACTIVITY_CHANNEL_ID else None
         checks.append(posting_check("Posts in the activity channel", activity, me) if config.ACTIVITY_CHANNEL_ID
                       else selftest.Check("Posts in the activity channel", None, "ACTIVITY_CHANNEL_ID is 0"))
+        admin = self.bot.get_channel(config.ADMIN_CHANNEL_ID) if config.ADMIN_CHANNEL_ID else None
+        checks.append(posting_check("Posts in the admin channel", admin, me) if config.ADMIN_CHANNEL_ID
+                      else selftest.Check("Posts in the admin channel", None, "ADMIN_CHANNEL_ID is 0"))
+        checks.append(loop_check(self.bot, "Admin", "weekly_summary", "Admin summary loop") if config.ADMIN_CHANNEL_ID
+                      else selftest.Check("Admin summary loop", None, "ADMIN_CHANNEL_ID is 0"))
         checks.append(audience_check(guild, theatre, interaction.user.id, self.bot.user.id))
         checks.append(await event_round_trip(guild, theatre, discord.utils.utcnow()))
         checks.append(await self.dm_samples(interaction.user, findings, guild, theatre))

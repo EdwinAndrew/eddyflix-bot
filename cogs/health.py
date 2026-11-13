@@ -16,6 +16,9 @@ class Health(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.jellyfin_stale_reported = False
+        # For the weekly admin summary
+        self.started = datetime.now()
+        self.jellyfin_outages = 0
         # Its own session: the Jellyfin client's carries the API key in its headers.
         self.push_session: aiohttp.ClientSession | None = None
 
@@ -67,6 +70,7 @@ class Health(commands.Cog):
                 if not self.jellyfin_stale_reported:
                     print(f"Heartbeat withheld: no successful Jellyfin call for {int(stale)}s")
                     self.jellyfin_stale_reported = True
+                    self.jellyfin_outages += 1
                 return
             if self.jellyfin_stale_reported:
                 print("Heartbeat resumed: Jellyfin calls succeeding again")

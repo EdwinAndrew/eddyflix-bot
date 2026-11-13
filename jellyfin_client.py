@@ -208,6 +208,15 @@ class JellyfinClient:
         result = await self._get(endpoint)
         return result.get('Items', []) if isinstance(result, dict) else []
 
+    async def movies_by_date_added(self, start: int = 0, limit: int = 50) -> List[dict]:
+        """One page of films, newest DateCreated first, for the admin summary."""
+        return await self.added_by_date("Movie", start, limit)
+
+    async def get_storage(self) -> dict:
+        """Free and used space for Jellyfin's own folders and each library's (admin key)."""
+        result = await self._get("/System/Info/Storage")
+        return result if isinstance(result, dict) else {}
+
     async def next_up(self, user_id: str, series_id: str) -> dict | None:
         """The episode of a series this user would watch next, half-watched ones
         included, or None when there is none."""

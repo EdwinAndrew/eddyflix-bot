@@ -37,6 +37,12 @@ async def init_database():
             )
         """)
 
+        # Why Jellyfin transcoded a play, e.g. "SubtitleCodecNotSupported,AudioCodecNotSupported",
+        # for the admin summary (#51). Plays from before 2026-11 have none.
+        async with db.execute("PRAGMA table_info(watch_history)") as cursor:
+            if 'transcode_reasons' not in [c[1] for c in await cursor.fetchall()]:
+                await db.execute("ALTER TABLE watch_history ADD COLUMN transcode_reasons TEXT")
+
         # Subscriptions table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
@@ -223,6 +229,20 @@ async def record_watch_start(session_id: str, session: dict):
         """, (session_id, user_name, item_id, item_name, item_type, series_name,
               season_number, episode_number, datetime.now(), play_method, device_name))
         await db.commit()
+
+async def record_transcode(session_id: str, item_id: str, play_method: str | None, reasons: list[str]):
+    """Note why the open play of this item is transcoded. Jellyfin fills in
+    TranscodingInfo a poll or two after playback starts, and a player can fall
+    back to transcoding part way, so this comes after record_watch_start."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        await db.execute("""
+            UPDATE watch_history SET transcode_reasons = ?, play_method = COALESCE(?, play_method)
+            WHERE id = (SELECT id FROM watch_history
+                        WHERE session_id = ? AND item_id = ? AND end_time IS NULL
+                        ORDER BY start_time DESC LIMIT 1)
+        """, (",".join(reasons), play_method, session_id, item_id))
+        await db.commit()
+
 
 async def record_watch_end(jf, session_id: str, item_id: str):
     """Record when a user stops watching content"""
