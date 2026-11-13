@@ -51,7 +51,18 @@ class Help(commands.Cog):
             name="📈 Analytics",
             value=(
                 "`/jf-stats-graph [days]` - Show watch time charts (default: 7 days)\n"
-                "`/jf-weekly-digest` - (Owner) Post the weekly digest now"
+                "`/jf-weekly-digest` - (Owner) Post the weekly digest now\n"
+                "`/jf-weekly-new` - (Owner) Post the New on EddyFlix list now"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="🍿 Movie Night",
+            value=(
+                "`/movienight <film> <day> <time>` - Schedule a movie night\n"
+                "`/movievote` - Post a poll of films for the next one\n"
+                "`/movienight-history` - Past nights, who came and how they were rated"
             ),
             inline=False
         )
@@ -108,7 +119,7 @@ class Help(commands.Cog):
             value=(
                 f"**Dashboard Channel:** <#{config.DASHBOARD_CHANNEL_ID}>\n"
                 f"**Activity Channel:** <#{config.ACTIVITY_CHANNEL_ID}>\n"
-                f"**Weekly Digest:** Sundays at 6 PM\n"
+                f"**Weekly Digest:** Sundays at 6 PM, then New on EddyFlix\n"
                 f"**Update Interval:** {config.UPDATE_INTERVAL} seconds"
             ),
             inline=False

@@ -14,21 +14,22 @@ Feature work and bugs are tracked in the
 | **Dashboard** | One message in a channel, edited every minute: server status and active streams |
 | **Activity feed** | Connections, playback starts, switches and stops with posters, and a warning at three transcodes. Two or more people on the same title at about the same point get one **🍿 Watching together** post instead, edited as people join and turned into **🎬 Watched together** at the end |
 | **Weekly digest** | Sundays at 6 PM: watch time, top shows, who watched most |
+| **New on EddyFlix** | Sundays a minute after the digest, in the same channel: what was added in the last 7 days. New films, new shows, and shows with new episodes on one line each ("The Simpsons · 25 new episodes · S09E01–E25"), with links and one uploaded poster grid. Skipped on a week with nothing new. `/jf-weekly-new` posts it now (owner only) |
 | **Achievements and streaks** | Watch-time tiers with badges, popcorn from the cob up: Corn at 10 h, Kernel 50, Popcorn 100, Salted 250, Buttery Popcorn 500, Bottomless Bucket 1,000. Small versions are uploaded as the bot's own emojis at start-up, so the card shows the collection inline; finished series (every episode in the library watched), daily watch streaks, movie nights attended. `/jf-achievements` shows them as one card; `/jf-link`, or the 👤 button in `#roles`, ties a Discord member to their Jellyfin user |
 | **New-episode DMs** | `/jf-subscribe` to a show from the library and the bot DMs you when new episodes land, one message per show per batch ("6 new episodes of Fallout: S02E01–E06") with the poster and links. Checked every five minutes; a show still importing is held for ten minutes so a whole season is one message. Closed DMs get a mention in the activity channel instead |
 | **Find something to watch** | `/watch` searches films and shows and answers only you: poster, overview, runtime, a link to open it in Jellyfin and, once you have used `/jf-link`, where you left off (the next episode, or the time you stopped a film at) |
 | **Getting started** | A guide in `#roles` for newcomers: how to get an account, which app on an LG TV, an iPhone or in a browser, the address, where to request things, and what to do on Discord after. The picker next to it has a **Which Jellyfin user are you?** button, the same as `/jf-link` without knowing the command |
 | **Pick something** | `/pick` picks a random film or show, with the same card as `/watch` and a **🎲 Reroll** button that swaps it in place (it goes after ten minutes unused). Narrow it by type, genre (from the library) and length (for a show, the episode length). Once you have used `/jf-link` it picks only what you haven't watched, or haven't finished for a show, unless you ask for `include_watched` |
 | **Continue watching** | `/continue` lists what you were in the middle of, up to eight, newest first and linked to Jellyfin: films you stopped part-way, and for each show the episode you stopped in or the next one. Only you see it; it needs `/jf-link` |
-| **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`, a reminder 15 minutes before, the event shown as live, and a recap of who was in the Theatre. `/spoiler` puts someone in *Spoiler Alert* for a while. See below |
+| **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`, a reminder 15 minutes before, the event shown as live, a recap of who was in the Theatre with a 1–5 🍿 rating, and `/movienight-history`. `/spoiler` puts someone in *Spoiler Alert* for a while. See below |
 | **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push. `/jf-selftest` (owner) checks everything end to end; see [Testing](#testing) |
 
 ### Commands
 
 `/jf-health` · `/jf-stats` · `/jf-status` · `/jf-recent` · `/jf-stats-graph` · `/jf-popular` ·
-`/jf-subscribe` · `/jf-unsubscribe` · `/jf-subscriptions` · `/jf-weekly-digest` ·
+`/jf-subscribe` · `/jf-unsubscribe` · `/jf-subscriptions` · `/jf-weekly-digest` · `/jf-weekly-new` ·
 `/jf-achievements` · `/jf-achievements-all` · `/jf-link` · `/jf-streaks` · `/jf-streaks-leaderboard` ·
-`/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/pick` · `/continue` · `/movienight` · `/movievote` · `/spoiler` · `/unspoiler`
+`/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/pick` · `/continue` · `/movienight` · `/movievote` · `/spoiler` · `/unspoiler` · `/movienight-history`
 
 ### Movie night
 
@@ -77,6 +78,13 @@ On start the bot creates whatever is missing, and never deletes anything:
     someone ends by hand, does not end the night: the bot keeps counting until the end time
   - Nights are kept in the database, so a restart neither repeats the reminder or the recap nor
     loses the minutes counted. Events made before this existed are picked up from Discord
+- **Rate it.** The recap has 1–5 🍿 buttons, open for 24 hours from the recap, for anyone who was
+  in the Theatre that night (attended or dropped by; anyone at all if nobody was counted). One
+  rating per member per night, pressing another replaces it, and the recap shows the running
+  average. The buttons keep working after a restart
+- **`/movienight-history`**: finished nights, newest first, with the date, film, host, how many
+  came (15 minutes in the Theatre) and the average rating, and the club's top-rated films once two
+  or more have ratings
 
 Names in [cogs/movie_night.py](cogs/movie_night.py) are the source of truth. Rename a role there, not in
 Discord, or the bot recreates the old name.
@@ -126,8 +134,10 @@ All settings are in [.env.example](.env.example).
 | `parties.py` | Working out watch parties from Jellyfin's sessions |
 | `screenings.py` | Movie night timing: when to remind, start and end, who attended, the recap |
 | `new_episodes.py` | Finding newly added episodes and grouping them for subscription DMs |
+| `new_this_week.py` | The weekly "New on EddyFlix" post: what was added in 7 days, grouped, and its poster grid |
+| `ratings.py` | Movie night ratings: who may rate, the persistent 🍿 buttons, the history lines |
 | `tiers.py` | Watch-time tiers and drawing their badges. Art in `assets/`, licences in [assets/LICENSES.md](assets/LICENSES.md) |
-| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night` (and `#roles`: the picker, the Jellyfin link button and the guide), `spoiler`, `watch` (with `/pick` and `/continue`), `help` |
+| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `weekly_new` (New on EddyFlix), `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night` (and `#roles`: the picker, the Jellyfin link button and the guide), `movie_history` (`/movienight-history`), `spoiler`, `watch` (with `/pick` and `/continue`), `help` |
 
 Background loops start when the bot dispatches `services_ready`, ten seconds after it connects
 and has set up the database and the movie night channels. Each cog with a loop listens for it.
@@ -149,7 +159,8 @@ Three layers, from cheapest to the real thing:
 1. **Unit tests** in `tests/`, run by CI on every push and pull request before anything is built:
    time parsing, the role picker (and its Spoiler Alert lock), the Jellyfin link
    menu and the getting-started guide, `/spoiler` expiry, streaks and achievements against a throwaway database, movie
-   night timing and attendance, new-episode batching, the command set, and the Discord calls
+   night timing and attendance, movie night ratings and history, new-episode batching, the weekly
+   "new this week" grouping and poster grid, the command set, and the Discord calls
    against fake objects. `tests/test_recorded_jellyfin.py` runs `/watch` and the new-episode DMs
    against **real Jellyfin responses** in `tests/fixtures/jellyfin/`, recorded from the server
    (trimmed, no user names) by `tests/fixtures/record_jellyfin.py`. Re-record when Jellyfin is

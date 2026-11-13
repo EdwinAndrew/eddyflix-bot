@@ -197,6 +197,17 @@ class JellyfinClient:
         result = await self._get("/Users")
         return result if isinstance(result, list) else []
 
+    async def added_by_date(self, item_type: str, start: int = 0, limit: int = 100) -> List[dict]:
+        """One page of films or series, newest DateCreated first, for the weekly
+        "New on EddyFlix" post. Like episodes, the caller pages until it is past
+        the date it wants."""
+        endpoint = (f"/Items?IncludeItemTypes={item_type}&Recursive=true&SortBy=DateCreated"
+                    f"&SortOrder=Descending&StartIndex={start}&Limit={limit}"
+                    f"&Fields=DateCreated,ProductionYear&EnableImages=false&EnableUserData=false"
+                    f"&{FILMS_NOT_COLLECTIONS}")
+        result = await self._get(endpoint)
+        return result.get('Items', []) if isinstance(result, dict) else []
+
     async def next_up(self, user_id: str, series_id: str) -> dict | None:
         """The episode of a series this user would watch next, half-watched ones
         included, or None when there is none."""

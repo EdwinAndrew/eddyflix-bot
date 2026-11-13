@@ -21,6 +21,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
+import ratings
 import screenings
 import watch_data
 
@@ -621,7 +622,11 @@ class MovieNight(commands.Cog):
         if announce is None or not (attended or dropped):
             return   # nobody was in the Theatre: nothing to recap
         counts = [(uid, await watch_data.movie_nights_attended([uid])) for uid in attended]
-        await announce.send(embed=screenings.recap_embed(night["title"], counts, dropped),
+        embed = screenings.recap_embed(night["title"], counts, dropped)
+        # 1-5 🍿 for a day (#50). The buttons outlive restarts, see ratings.py
+        embed.add_field(name=ratings.FIELD, value=ratings.field_text([], discord.utils.utcnow() + ratings.WINDOW),
+                        inline=False)
+        await announce.send(embed=embed, view=ratings.rating_view(night["event_id"]),
                             allowed_mentions=discord.AllowedMentions.none())
 
 

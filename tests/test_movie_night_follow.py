@@ -32,9 +32,11 @@ class FakeEvent:
 class FakeChannel:
     def __init__(self, name):
         self.name, self.mention, self.sent, self.voice_states = name, f"<#{name}>", [], {}
+        self.views = []
 
-    async def send(self, content=None, embed=None, **kw):
+    async def send(self, content=None, embed=None, view=None, **kw):
         self.sent.append((content, embed))
+        self.views.append(view)
 
 
 class FakeGuild:
@@ -106,6 +108,8 @@ def test_a_whole_night(setup):
     fields = {f.name: f.value for f in g.announce.sent[1][1].fields}
     assert fields["🎥 In the Theatre (2)"] == "<@10> · 1st movie night\n<@11> · 1st movie night"
     assert fields["Dropped by"] == "<@12>"
+    assert "can rate it" in fields["🍿 Rate it"]                 # #50: 1-5 🍿 buttons for the night
+    assert [c.custom_id for c in g.announce.views[1].children] == [f"movienight:rate:1:{n}" for n in range(1, 6)]
 
     setup.state["cog"] = mn.MovieNight(setup.bot)    # another restart: no second recap
     setup.tick(140)
