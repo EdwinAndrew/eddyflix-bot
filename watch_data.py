@@ -50,6 +50,22 @@ async def init_database():
             )
         """)
 
+        # Small settings the bot keeps between runs, e.g. the new-episode mark
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS bot_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+
+        # Episodes already announced or already in the library, by show, season
+        # and number (see new_episodes.py)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS known_episodes (
+                episode_key TEXT PRIMARY KEY
+            )
+        """)
+
         # Popular content cache table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS popular_content (

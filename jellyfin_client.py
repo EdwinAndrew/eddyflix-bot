@@ -161,6 +161,27 @@ class JellyfinClient:
         result = await self._get(endpoint)
         return result.get('Items', []) if isinstance(result, dict) else []
 
+    async def search_series(self, term: str = "", limit: int = 25) -> List[dict]:
+        """Series whose title matches term (all of them, by name, when term is empty)."""
+        endpoint = (f"/Items?IncludeItemTypes=Series&Recursive=true&Limit={limit}"
+                    f"&SortBy=SortName&Fields=ProductionYear")
+        if term:
+            endpoint += f"&SearchTerm={quote(term)}"
+        result = await self._get(endpoint)
+        return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def episodes_by_date_added(self, start: int = 0, limit: int = 100) -> List[dict]:
+        """One page of episodes, newest DateCreated first, for the subscription poll.
+
+        Jellyfin 12 ignores MinDateCreated here, so the caller pages until it
+        reaches episodes older than it wants.
+        """
+        endpoint = (f"/Items?IncludeItemTypes=Episode&Recursive=true&SortBy=DateCreated"
+                    f"&SortOrder=Descending&StartIndex={start}&Limit={limit}"
+                    f"&Fields=DateCreated&EnableImages=false&EnableUserData=false")
+        result = await self._get(endpoint)
+        return result.get('Items', []) if isinstance(result, dict) else []
+
     async def next_up(self, user_id: str, series_id: str) -> dict | None:
         """The episode of a series this user would watch next, half-watched ones
         included, or None when there is none."""

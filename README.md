@@ -15,6 +15,7 @@ Feature work and bugs are tracked in the
 | **Activity feed** | Connections, playback starts, switches and stops with posters, and a warning at three transcodes. Two or more people on the same title at about the same point get one **🍿 Watching together** post instead, edited as people join and turned into **🎬 Watched together** at the end |
 | **Weekly digest** | Sundays at 6 PM: watch time, top shows, who watched most |
 | **Achievements and streaks** | Watch-time tiers with badges, popcorn from the cob up: Corn at 10 h, Kernel 50, Popcorn 100, Salted 250, Buttery Popcorn 500, Bottomless Bucket 1,000. Small versions are uploaded as the bot's own emojis at start-up, so the card shows the collection inline; finished series (every episode in the library watched), daily watch streaks, movie nights attended. `/jf-achievements` shows them as one card; `/jf-link` ties a Discord member to their Jellyfin user |
+| **New-episode DMs** | `/jf-subscribe` to a show from the library and the bot DMs you when new episodes land, one message per show per batch ("6 new episodes of Fallout: S02E01–E06") with the poster and links. Checked every five minutes; a show still importing is held for ten minutes so a whole season is one message. Closed DMs get a mention in the activity channel instead |
 | **Find something to watch** | `/watch` searches films and shows and answers only you: poster, overview, runtime, a link to open it in Jellyfin and, once you have used `/jf-link`, where you left off (the next episode, or the time you stopped a film at) |
 | **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`, a reminder 15 minutes before, the event shown as live, and a recap of who was in the Theatre. See below |
 | **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push |
@@ -104,8 +105,9 @@ All settings are in [.env.example](.env.example).
 | `checks.py` | The owner-only check and the slash-command error handler |
 | `parties.py` | Working out watch parties from Jellyfin's sessions |
 | `screenings.py` | Movie night timing: when to remind, start and end, who attended, the recap |
+| `new_episodes.py` | Finding newly added episodes and grouping them for subscription DMs |
 | `tiers.py` | Watch-time tiers and drawing their badges. Art in `assets/`, licences in [assets/LICENSES.md](assets/LICENSES.md) |
-| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions`, `achievements`, `movie_night`, `watch`, `help` |
+| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night`, `watch`, `help` |
 
 Background loops start when the bot dispatches `services_ready`, ten seconds after it connects
 and has set up the database and the movie night channels. Each cog with a loop listens for it.
@@ -121,8 +123,8 @@ set -a; . ./.env; set +a; python bot.py
 ```
 
 **Tests** live in `tests/`: time parsing, the role picker, streaks and achievements against a
-throwaway database, movie night timing and attendance, and the command set. CI runs them on every push and pull request, before
-anything is built.
+throwaway database, movie night timing and attendance, new-episode batching for subscriptions,
+and the command set. CI runs them on every push and pull request, before anything is built.
 
 **Releasing:** merge to `main`, then tag `vX.Y.Z` and push the tag. The workflow runs the tests,
 builds the image, checks that the bot imports, and publishes `X.Y.Z` (and `sha-…` for every `main` commit). The

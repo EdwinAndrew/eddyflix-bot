@@ -58,9 +58,9 @@ class Help(commands.Cog):
         embed.add_field(
             name="🔔 Subscriptions",
             value=(
-                "`/jf-subscribe <show-name>` - Subscribe to notifications for a show\n"
-                "`/jf-unsubscribe <show-name>` - Unsubscribe from a show\n"
-                "`/jf-subscriptions` - List your current subscriptions"
+                "`/jf-subscribe <show>` - Get a DM when new episodes of a show are added\n"
+                "`/jf-unsubscribe <show>` - Stop those DMs for a show\n"
+                "`/jf-subscriptions` - List the shows you're subscribed to"
             ),
             inline=False
         )
