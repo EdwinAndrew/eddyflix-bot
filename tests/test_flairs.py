@@ -125,7 +125,7 @@ def test_picker_custom_ids_are_stable():
     async def make():
         return mn.RolePicker()
     view = asyncio.run(make())
-    # Changing these breaks the buttons on the message already posted in #roles
+    # Changing these breaks the buttons on the message already posted in #start-here
     assert {c.custom_id for c in view.children} == {
         "movienight:flairs", "movienight:ticket", "movienight:clear", "movienight:link"}
     assert view.timeout is None

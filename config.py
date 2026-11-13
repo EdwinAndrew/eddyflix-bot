@@ -17,7 +17,7 @@ UPDATE_INTERVAL = int(os.getenv("UPDATE_INTERVAL", "60"))
 JELLYFIN_PUBLIC_URL = os.getenv("JELLYFIN_PUBLIC_URL", "").rstrip("/")
 
 # Where people request films and shows (Seerr), for the getting-started guide in
-# #roles. Optional: empty leaves the line out.
+# #start-here. Optional: empty leaves the line out.
 SEERR_PUBLIC_URL = os.getenv("SEERR_PUBLIC_URL", "").rstrip("/")
 
 # Uptime Kuma has no Docker socket, so it cannot see the container's health
