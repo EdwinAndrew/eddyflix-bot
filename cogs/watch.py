@@ -1,9 +1,14 @@
-"""/watch: find a film or show in the library and get a link to it.
+"""/watch, /pick and /continue: finding something to watch, and getting back to it.
 
-The answer is ephemeral, so only the person asking sees it. For someone linked
-with /jf-link it also says where they left off.
+/watch finds a film or show by name, /pick picks one at random (with a reroll),
+and /continue lists what you were in the middle of. Every answer is ephemeral, so
+only the person asking sees it. For someone linked with /jf-link the card also
+says where they left off.
 """
+import asyncio
 import io
+import random
+import time
 
 import discord
 from discord import app_commands
@@ -127,13 +132,174 @@ def watch_card(item: dict, progress: str | None) -> discord.Embed:
     return embed
 
 
-def open_button(item: dict) -> discord.ui.View | None:
+def jellyfin_button(item: dict) -> discord.ui.Button | None:
     link = details_link(item["Id"])
-    if not link:
+    return discord.ui.Button(label="Open in Jellyfin", url=link, emoji="▶️") if link else None
+
+
+def open_button(item: dict) -> discord.ui.View | None:
+    button = jellyfin_button(item)
+    if not button:
         return None
     view = discord.ui.View()
-    view.add_item(discord.ui.Button(label="Open in Jellyfin", url=link, emoji="▶️"))
+    view.add_item(button)
     return view
+
+
+# --- /pick -------------------------------------------------------------------
+
+PICK_TYPES = {"film": "Movie", "show": "Series"}
+LENGTHS = [("Under 30 minutes", 30), ("Under 45 minutes", 45), ("Under 1 hour", 60),
+           ("Under 1½ hours", 90), ("Under 2 hours", 120), ("Under 2½ hours", 150)]
+REROLL_MINUTES = 10                    # the 🎲 button goes after this long unused
+GENRE_CACHE_SECONDS = 600
+
+
+def pick_types(kind: str | None) -> str:
+    """The type option as Jellyfin's IncludeItemTypes: films, shows, or both."""
+    return PICK_TYPES.get(kind or "", "Movie,Series")
+
+
+def short_enough(item: dict, max_minutes: int | None) -> bool:
+    """Within the length asked for. For a show that is its episode length. Jellyfin
+    has no runtime for many shows; they are left out once a length is asked for."""
+    if not max_minutes:
+        return True
+    ticks = item.get("RunTimeTicks") or 0
+    return 0 < ticks <= max_minutes * 60 * TICKS_PER_SECOND
+
+
+def match_genre(typed: str, genres: list[str]) -> str:
+    """The library's spelling of a typed genre: "sci-fi & fantasy" -> "Sci-Fi & Fantasy"."""
+    typed = typed.strip()
+    return next((g for g in genres if g.lower() == typed.lower()), typed)
+
+
+def genres_matching(genres: list[str], current: str) -> list[str]:
+    """Genres for the autocomplete: those containing what has been typed, at most 25."""
+    return [g for g in genres if current.strip().lower() in g.lower()][:25]
+
+
+def pool_footer(count: int, types: str, unwatched: bool, linked: bool) -> str:
+    """'Picked from 77 unwatched films', and a /jf-link hint for someone not linked."""
+    nouns = {"Movie": ("film", "films"), "Series": ("show", "shows")}.get(types, ("title", "films and shows"))
+    text = f"Picked from {count} {'unwatched ' if unwatched else ''}{nouns[0] if count == 1 else nouns[1]}"
+    return text + ("" if linked else ". Use /jf-link to see where you left off.")
+
+
+def draw(queue: list[dict], pool: list[dict], current_id: str | None) -> dict:
+    """The next pick. Takes from a shuffled queue so rerolls do not repeat, and
+    reshuffles the pool when it runs out, without starting on the one on screen."""
+    if not queue:
+        queue.extend(random.sample(pool, len(pool)))
+        if len(queue) > 1 and queue[-1]["Id"] == current_id:
+            queue[0], queue[-1] = queue[-1], queue[0]
+    return queue.pop()
+
+
+class PickView(discord.ui.View):
+    """🎲 Reroll and Open in Jellyfin under a /pick answer. Rerolling edits the
+    same message. Not persistent: after REROLL_MINUTES unused the 🎲 goes."""
+
+    def __init__(self, cog: "Watch", pool: list[dict], user_id: str | None, footer: str):
+        super().__init__(timeout=REROLL_MINUTES * 60)
+        self.cog, self.pool, self.user_id, self.footer = cog, pool, user_id, footer
+        self.queue: list[dict] = []
+        self.current: dict | None = None
+        self.link: discord.ui.Button | None = None
+        self.last: discord.Interaction | None = None     # the newest, to edit at the timeout
+
+    async def show(self, interaction: discord.Interaction, first: bool = False):
+        found = draw(self.queue, self.pool, self.current["Id"] if self.current else None)
+        self.current, embed, poster = await self.cog.answer(found, self.user_id)
+        embed.set_footer(text=self.footer)
+        if self.link:
+            self.remove_item(self.link)
+        self.link = jellyfin_button(self.current)
+        if self.link:
+            self.add_item(self.link)
+        if first:
+            extra = {"file": poster} if poster else {}
+            await interaction.followup.send(embed=embed, view=self, ephemeral=True, **extra)
+        else:
+            await interaction.edit_original_response(embed=embed, attachments=[poster] if poster else [], view=self)
+        self.last = interaction
+
+    @discord.ui.button(label="Reroll", emoji="🎲", style=discord.ButtonStyle.primary)
+    async def reroll(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.show(interaction)
+
+    async def on_timeout(self):
+        self.remove_item(self.reroll)
+        try:
+            await self.last.edit_original_response(view=self)
+        except (AttributeError, discord.HTTPException):
+            pass
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item):
+        print(f"/pick reroll failed: {error}")
+        await interaction.followup.send("Couldn't reach Jellyfin for another pick.", ephemeral=True)
+
+
+# --- /continue ---------------------------------------------------------------
+
+CONTINUE_LIMIT = 8
+
+
+def played_at(item: dict) -> str:
+    """When the user last played it, sortable ("" if never). Seconds only: Jellyfin
+    writes fractions of different lengths."""
+    return ((item.get("UserData") or {}).get("LastPlayedDate") or "")[:19]
+
+
+def last_finished(episodes: list[dict]) -> dict[str, str]:
+    """Each show's most recently finished episode, as show id -> played_at."""
+    finished: dict[str, str] = {}
+    for episode in episodes:
+        if series := episode.get("SeriesId"):
+            finished[series] = max(finished.get(series, ""), played_at(episode))
+    return finished
+
+
+def in_progress(resume: list[dict], next_up: list[dict], finished: dict[str, str],
+                limit: int = CONTINUE_LIMIT) -> list[dict]:
+    """What /continue lists: one entry per film or show, most recent first.
+
+    For a show, a half-watched episode beats Jellyfin's next-up one, unless an
+    episode was finished after it: then it is an old one left part-way."""
+    entries: dict[str, tuple[str, dict]] = {}      # film or show id -> (date, item)
+    for item in resume:
+        if item.get("Type") == "Movie":
+            key = item["Id"]
+        elif item.get("Type") == "Episode" and item.get("SeriesId"):
+            key = item["SeriesId"]
+            if (item.get("UserData") or {}).get("Played") or played_at(item) < finished.get(key, ""):
+                continue
+        else:
+            continue        # Jellyfin lists whole seasons and shows here too
+        if key not in entries or played_at(item) > entries[key][0]:
+            entries[key] = (played_at(item), item)
+    for episode in next_up:
+        key = episode.get("SeriesId")
+        if key and key not in entries:
+            # Dated by the show's last finished episode, which is what makes it next
+            entries[key] = (max(finished.get(key, ""), played_at(episode)), episode)
+    ordered = sorted(entries.values(), key=lambda entry: entry[0], reverse=True)
+    return [item for _, item in ordered[:limit]]
+
+
+def continue_line(item: dict) -> str:
+    """'▶️ Rush Hour · stopped at 6:20 of 1:37:49' or '⏭️ The Simpsons · S02E10 · Bart Gets Hit by a Car'."""
+    if item.get("Type") == "Episode":
+        text = f"{linked_title(item.get('SeriesName') or 'Unknown', item.get('Id'))} · {episode_label(item)}"
+    else:
+        text = linked_title(item.get("Name") or "Unknown", item.get("Id"))
+    position = (item.get("UserData") or {}).get("PlaybackPositionTicks") or 0
+    if not position:
+        return f"⏭️ {text}"
+    total = item.get("RunTimeTicks")
+    return f"▶️ {text} · stopped at {clock(position)}" + (f" of {clock(total)}" if total else "")
 
 
 # --- the command -------------------------------------------------------------
@@ -141,6 +307,7 @@ def open_button(item: dict) -> discord.ui.View | None:
 class Watch(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._genres: dict[str, tuple[float, list[str]]] = {}      # types -> (when, names)
 
     async def resolve(self, value: str) -> dict | None:
         """The autocomplete gives an item id; typed text without picking is searched instead."""
@@ -150,11 +317,15 @@ class Watch(commands.Cog):
                 return item
         return best_match(value, await self.bot.jf.search_titles(value, limit=10))
 
-    async def progress(self, discord_user_id: int, item_id: str) -> tuple[dict | None, str | None]:
-        """The item as the caller's Jellyfin user sees it, and where they left off.
-        (None, None) when they are not linked or the link names no Jellyfin user."""
+    async def jellyfin_user(self, discord_user_id: int) -> str | None:
+        """The caller's Jellyfin user id, or None when they are not linked or the
+        link names no Jellyfin user."""
         name = await watch_data.get_link(discord_user_id)
-        user_id = await self.bot.jf.get_user_id(name) if name else None
+        return await self.bot.jf.get_user_id(name) if name else None
+
+    async def progress(self, user_id: str | None, item_id: str) -> tuple[dict | None, str | None]:
+        """The item as this Jellyfin user sees it, and where they left off.
+        (None, None) without a user."""
         if not user_id:
             return None, None
         item = await self.bot.jf.get_item(item_id, user_id)
@@ -163,6 +334,32 @@ class Watch(commands.Cog):
         if item.get("Type") == "Series":
             return item, series_progress(item, await self.bot.jf.next_up(user_id, item_id))
         return item, film_progress(item)
+
+    async def answer(self, found: dict, user_id: str | None) -> tuple[dict, discord.Embed, discord.File | None]:
+        """The card for a film or show: the full item, the embed, and its poster."""
+        item, progress = await self.progress(user_id, found["Id"])
+        if item is None:
+            item = await self.bot.jf.get_item(found["Id"]) or found
+            # Jellyfin counts a show's episodes only when asked as a user
+            if item.get("Type") == "Series" and not item.get("RecursiveItemCount"):
+                item = {**item, "RecursiveItemCount": await self.bot.jf.get_series_episode_count(item["Id"])}
+        embed = watch_card(item, progress)
+        poster = None
+        if image := await self.bot.jf.get_image(item["Id"], "Primary", max_width=600):
+            poster = discord.File(io.BytesIO(image), filename="poster.jpg")
+            embed.set_thumbnail(url="attachment://poster.jpg")
+        return item, embed, poster
+
+    async def genres(self, types: str) -> list[str]:
+        """The library's genres, kept for a while: the autocomplete asks on every keystroke."""
+        cached = self._genres.get(types)
+        if cached and time.monotonic() - cached[0] < GENRE_CACHE_SECONDS:
+            return cached[1]
+        names = await self.bot.jf.get_genres(types)
+        self._genres[types] = (time.monotonic(), names)
+        return names
+
+    # --- /watch ---------------------------------------------------------------
 
     @app_commands.command(name="watch", description="Find a film or show and get a link to it, with where you left off")
     @app_commands.describe(title="A film or show from the Jellyfin library")
@@ -176,20 +373,12 @@ class Watch(commands.Cog):
         if not found:
             await interaction.followup.send(f"Nothing called “{title}” in Jellyfin.", ephemeral=True)
             return
-        item, progress = await self.progress(interaction.user.id, found["Id"])
-        if item is None:
-            item = await self.bot.jf.get_item(found["Id"]) or found
-            # Jellyfin counts a show's episodes only when asked as a user
-            if item.get("Type") == "Series" and not item.get("RecursiveItemCount"):
-                item = {**item, "RecursiveItemCount": await self.bot.jf.get_series_episode_count(item["Id"])}
-
-        embed = watch_card(item, progress)
+        item, embed, poster = await self.answer(found, await self.jellyfin_user(interaction.user.id))
         extra = {}
         if view := open_button(item):
             extra["view"] = view
-        if poster := await self.bot.jf.get_image(item["Id"], "Primary", max_width=600):
-            extra["file"] = discord.File(io.BytesIO(poster), filename="poster.jpg")
-            embed.set_thumbnail(url="attachment://poster.jpg")
+        if poster:
+            extra["file"] = poster
         await interaction.followup.send(embed=embed, ephemeral=True, **extra)
 
     @watch.autocomplete("title")
@@ -201,6 +390,81 @@ class Watch(commands.Cog):
         except Exception:
             return []
         return [app_commands.Choice(name=choice_label(i)[:100], value=i["Id"]) for i in items]
+
+    # --- /pick ----------------------------------------------------------------
+
+    @app_commands.command(name="pick", description="Something to watch, picked at random, with a reroll")
+    @app_commands.rename(kind="type")
+    @app_commands.describe(
+        kind="A film or a show (either, if left out)",
+        genre="A genre from the library",
+        max_length="How long it can be. For a show, the length of an episode",
+        include_watched="Also pick what you've already seen (once you've used /jf-link)",
+    )
+    @app_commands.choices(
+        kind=[app_commands.Choice(name="Film", value="film"), app_commands.Choice(name="Show", value="show")],
+        max_length=[app_commands.Choice(name=name, value=minutes) for name, minutes in LENGTHS],
+    )
+    async def pick(self, interaction: discord.Interaction, kind: app_commands.Choice[str] | None = None,
+                   genre: str | None = None, max_length: app_commands.Choice[int] | None = None,
+                   include_watched: bool = False):
+        if self.bot.jf is None:
+            await interaction.response.send_message("Jellyfin isn't configured.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        types = pick_types(kind.value if kind else None)
+        if genre:
+            genre = match_genre(genre, await self.genres(types))
+        user_id = await self.jellyfin_user(interaction.user.id)
+        unwatched = bool(user_id) and not include_watched
+        items = await self.bot.jf.pick_pool(types, genre, user_id, unwatched)
+        pool = [i for i in items if short_enough(i, max_length.value if max_length else None)]
+        if not pool:
+            hint = " Try `include_watched`, or fewer filters." if unwatched else " Try fewer filters."
+            await interaction.followup.send("Nothing in the library matches that." + hint, ephemeral=True)
+            return
+        view = PickView(self, pool, user_id, pool_footer(len(pool), types, unwatched, linked=bool(user_id)))
+        await view.show(interaction, first=True)
+
+    @pick.autocomplete("genre")
+    async def pick_genre(self, interaction: discord.Interaction, current: str):
+        if self.bot.jf is None:
+            return []
+        try:
+            names = await self.genres(pick_types(getattr(interaction.namespace, "type", None)))
+        except Exception:
+            return []
+        return [app_commands.Choice(name=g, value=g) for g in genres_matching(names, current)]
+
+    # --- /continue ------------------------------------------------------------
+
+    @app_commands.command(name="continue", description="What you were in the middle of, with links")
+    async def continue_watching(self, interaction: discord.Interaction):
+        if self.bot.jf is None:
+            await interaction.response.send_message("Jellyfin isn't configured.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        user_id = await self.jellyfin_user(interaction.user.id)
+        if not user_id:
+            await interaction.followup.send(
+                "Link your Jellyfin user with `/jf-link` first, then `/continue` shows what you were in the middle of.",
+                ephemeral=True)
+            return
+        # More than we list: seasons, finished episodes and repeats of a show drop out
+        resume, next_up, finished = await asyncio.gather(
+            self.bot.jf.resume_items(user_id, limit=20),
+            self.bot.jf.next_up_items(user_id, limit=20),
+            self.bot.jf.played_episodes(user_id),
+        )
+        items = in_progress(resume, next_up, last_finished(finished))
+        if not items:
+            await interaction.followup.send("Nothing in progress. `/pick` can find you something.", ephemeral=True)
+            return
+        embed = discord.Embed(title="Continue watching", colour=COLOUR,
+                              description="\n".join(continue_line(i) for i in items))
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def setup(bot):
