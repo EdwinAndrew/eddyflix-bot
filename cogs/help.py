@@ -108,7 +108,8 @@ class Help(commands.Cog):
             name="🔧 Owner only",
             value=(
                 "`/jf-debug-sessions [limit]` - Show unclosed watch sessions\n"
-                "`/jf-selftest` - Check the bot end to end, Discord included"
+                "`/jf-selftest` - Check the bot end to end, Discord included\n"
+                "`/jf-admin-summary` - Post the weekly admin summary now"
             ),
             inline=False
         )

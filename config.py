@@ -6,6 +6,10 @@ JELLYFIN_API_KEY = os.getenv("JELLYFIN_API_KEY")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DASHBOARD_CHANNEL_ID = int(os.getenv("DASHBOARD_CHANNEL_ID", "0"))
 ACTIVITY_CHANNEL_ID = int(os.getenv("ACTIVITY_CHANNEL_ID", "0"))
+# A private channel for the server owner: the weekly admin summary and
+# operational warnings such as the transcode load. 0 = off, and the warnings
+# stay in the activity channel.
+ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID", "0"))
 UPDATE_INTERVAL = int(os.getenv("UPDATE_INTERVAL", "60"))
 
 # Where people open Jellyfin from, e.g. https://jellyfin.example.com. Used for

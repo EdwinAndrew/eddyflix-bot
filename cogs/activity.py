@@ -1,4 +1,5 @@
-"""The activity feed: connections, playback and transcode load, polled every 30 seconds.
+"""The activity feed, polled every 30 seconds: one post per viewing (viewings.py),
+one per watch party (parties.py), and a warning when too much is transcoding.
 
 Also where watch history gets recorded, since that follows the same sessions.
 """
@@ -9,9 +10,13 @@ import aiosqlite
 import discord
 from discord.ext import commands, tasks
 
+import admin_summary
 import config
 import parties
+import viewings
 import watch_data
+
+TRANSCODE_WARNING = 3     # this many transcodes at once gets a warning
 
 
 class Activity(commands.Cog):
@@ -20,7 +25,10 @@ class Activity(commands.Cog):
         self.active_sessions = {}
         self.sessions_seeded = False   # set after the first session poll; see check_sessions
         self.parties = {}              # item id -> the watch party on it; see update_parties
-        self.party_sessions = set()    # sessions that were in a party at the last poll
+        self.feed = viewings.Feed()     # one post per viewing; see viewings.py
+        self.reasons_recorded = set()  # (session, item) whose transcode reasons are saved
+        self.transcode_warned = False
+        self.now = datetime.now         # replaced in the tests
 
     async def poster_for(self, item: dict) -> bytes | None:
         """A small poster for a playback post: the show's for an episode, the film's
@@ -41,7 +49,7 @@ class Activity(commands.Cog):
         """One post per watch party: sent when it forms, edited as people join or
         leave, and turned into a "watched together" line when it ends. After a
         restart, parties already running are tracked without a post."""
-        now = datetime.now()
+        now = self.now()
         for item_id, party in parties_now.items():
             known = self.parties.get(item_id)
             if known is None:
@@ -75,7 +83,7 @@ class Activity(commands.Cog):
         try:
             await known["message"].edit(embed=embed)
         except discord.HTTPException as e:
-            print(f"Could not update the watch party post: {e}")
+            print(f"Could not update a feed post: {e}")
 
     @commands.Cog.listener()
     async def on_services_ready(self):
@@ -84,7 +92,7 @@ class Activity(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def check_sessions(self):
-        """Check for session changes every 30 seconds"""
+        """Poll Jellyfin's sessions: record plays, update the feed, warn about transcodes."""
         try:
             sessions = await self.bot.jf.get_sessions()
             current_session_ids = {s['Id'] for s in sessions}
@@ -93,159 +101,116 @@ class Activity(commands.Cog):
             if not activity_channel:
                 return
 
-            # Open sessions live in memory only, so after a restart every session
-            # Jellyfin still lists (idle ones linger for hours) looked new and was
-            # announced as "connected" or "started watching". The first poll only
-            # takes note of them; watch history is still recorded below.
+            # Open sessions live in memory only, so after a restart everything
+            # Jellyfin still lists would look new. The first poll only takes note
+            # of what is playing; watch history is still recorded below.
             announce = self.sessions_seeded
 
-            # People watching the same thing together get one post between them,
-            # so their own start and stop posts are skipped.
+            # People watching the same thing together get one post between them
             parties_now = parties.find_parties(sessions)
             in_party = {sid for party in parties_now.values() for sid in party['session_ids']}
 
             for session in sessions:
-                sess_id = session['Id']
-                username = session.get('UserName', 'Unknown')
-                device = session.get('DeviceName', 'Unknown')
+                await self.record(session)
 
-                if sess_id not in self.active_sessions and announce:
-                    embed = discord.Embed(
-                        title="👤 User Connected",
-                        description=f"**{username}** connected from **{device}**",
-                        color=discord.Color.green(),
-                        timestamp=datetime.now()
-                    )
-                    await activity_channel.send(embed=embed)
-
-                now_playing = session.get('NowPlayingItem')
-                prev_playing = self.active_sessions.get(sess_id, {}).get('NowPlayingItem')
-
-                # Detect if content changed (either started fresh or switched to different show/movie)
-                now_item_id = now_playing.get('Id') if now_playing else None
-                prev_item_id = prev_playing.get('Id') if prev_playing else None
-
-                # If bot just started and we find an active playback, check database for existing unclosed session
-                if now_playing and sess_id not in self.active_sessions:
-                    # Bot may have restarted - check if there's an unclosed session in DB
-                    async with aiosqlite.connect(config.DB_PATH) as db:
-                        async with db.execute("""
-                            SELECT id FROM watch_history
-                            WHERE session_id = ? AND item_id = ? AND end_time IS NULL
-                            ORDER BY start_time DESC LIMIT 1
-                        """, (sess_id, now_item_id)) as cursor:
-                            existing = await cursor.fetchone()
-
-                    # If no existing session, record the start
-                    if not existing:
-                        await watch_data.record_watch_start(sess_id, session)
-
-                # Record watch history when content changes
-                elif now_playing and now_item_id != prev_item_id:
-                    # If switching from one item to another, record end of previous
-                    if prev_item_id:
-                        await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item_id)
-                    # Record start of new item
-                    await watch_data.record_watch_start(sess_id, session)
-
-                # Only send notification if the item ID actually changed (switched content)
-                if announce and now_playing and now_item_id != prev_item_id and sess_id not in in_party:
-                    item_name = now_playing.get('Name', 'Unknown')
-                    item_type = now_playing.get('Type', 'Media')
-
-                    # Determine if this is a fresh start or a switch
-                    if prev_playing:
-                        title_text = "🔄 Switched Content"
-                        desc_text = f"**{username}** switched to"
-                    else:
-                        title_text = "▶️ Playback Started"
-                        desc_text = f"**{username}** started watching"
-
-                    embed = discord.Embed(
-                        title=title_text,
-                        description=desc_text,
-                        color=discord.Color.blue(),
-                        timestamp=datetime.now()
-                    )
-
-                    if item_type == 'Episode':
-                        series = now_playing.get('SeriesName', 'Unknown')
-                        season = now_playing.get('ParentIndexNumber', '?')
-                        episode = now_playing.get('IndexNumber', '?')
-                        embed.add_field(name="Show", value=series, inline=True)
-                        embed.add_field(name="Episode", value=f"S{season}E{episode}", inline=True)
-                        embed.add_field(name="Title", value=item_name, inline=False)
-                    else:
-                        embed.add_field(name="Title", value=item_name, inline=True)
-                        embed.add_field(name="Type", value=item_type, inline=True)
-
-                    embed.add_field(name="Device", value=device, inline=True)
-
-                    files = []
-                    poster = await self.poster_for(now_playing)
-                    if poster:
-                        files.append(discord.File(io.BytesIO(poster), filename="poster.jpg"))
-                        embed.set_thumbnail(url="attachment://poster.jpg")
-
-                    await activity_channel.send(embed=embed, files=files)
-
-                elif prev_playing and not now_playing:
-                    prev_name = prev_playing.get('Name', 'Unknown')
-
-                    # Record end of watch session
-                    if prev_item_id:
-                        await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item_id)
-
-                    if sess_id not in self.party_sessions:
-                        embed = discord.Embed(
-                            title="⏹️ Playback Stopped",
-                            description=f"**{username}** stopped watching **{prev_name}**",
-                            color=discord.Color.greyple(),
-                            timestamp=datetime.now()
-                        )
-                        await activity_channel.send(embed=embed)
-
-                self.active_sessions[sess_id] = session
-
-            offline_sessions = set(self.active_sessions.keys()) - current_session_ids
-            for sess_id in offline_sessions:
-                username = self.active_sessions[sess_id].get('UserName', 'Unknown')
-
-                # Record end of any active watch session when user disconnects
-                prev_session = self.active_sessions[sess_id]
-                prev_item = prev_session.get('NowPlayingItem')
+            for sess_id in set(self.active_sessions) - current_session_ids:
+                # Record the end of anything still playing when the session went away
+                prev_item = self.active_sessions.pop(sess_id).get('NowPlayingItem')
                 if prev_item:
                     await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item.get('Id'))
+            self.reasons_recorded = {k for k in self.reasons_recorded if k[0] in current_session_ids}
 
-                embed = discord.Embed(
-                    title="👋 User Disconnected",
-                    description=f"**{username}** disconnected",
-                    color=discord.Color.red(),
-                    timestamp=datetime.now()
-                )
-                await activity_channel.send(embed=embed)
-                del self.active_sessions[sess_id]
+            # Connections are not posted: Jellyfin opens a session whenever
+            # someone opens an app, and keeps idle ones for hours (#13).
+            now = self.now()
+            for viewing in self.feed.update(sessions, now, in_party, announce):
+                await self.post_viewing(viewing, activity_channel, now)
 
             await self.update_parties(parties_now, activity_channel, announce)
-            self.party_sessions = in_party
             self.sessions_seeded = True
 
-            # Monitor transcodes - warn if too many
-            transcoding_sessions = [s for s in sessions if s.get('PlayState', {}).get('PlayMethod') == 'Transcode']
-            if len(transcoding_sessions) >= 3:
-                transcode_users = [s.get('UserName', 'Unknown') for s in transcoding_sessions]
-                embed = discord.Embed(
-                    title="⚠️ High Transcode Load",
-                    description=f"**{len(transcoding_sessions)} active transcodes** detected",
-                    color=discord.Color.orange(),
-                    timestamp=datetime.now()
-                )
-                embed.add_field(name="Users Transcoding", value="\n".join([f"• {u}" for u in transcode_users]), inline=False)
-                embed.add_field(name="💡 Tip", value="Consider using compatible formats or adjusting quality settings to reduce server load.", inline=False)
-                await activity_channel.send(embed=embed)
+            await self.check_transcodes(sessions, activity_channel)
 
         except Exception as e:
             print(f"Error checking sessions: {e}")
+
+    async def record(self, session: dict):
+        """Watch history for one session: a start when something new plays, an end
+        when it changes or stops, and why it is transcoded once Jellyfin says."""
+        sess_id = session['Id']
+        now_playing = session.get('NowPlayingItem')
+        prev_playing = self.active_sessions.get(sess_id, {}).get('NowPlayingItem')
+        now_item_id = now_playing.get('Id') if now_playing else None
+        prev_item_id = prev_playing.get('Id') if prev_playing else None
+
+        if now_playing and sess_id not in self.active_sessions:
+            # The bot may have restarted mid-play: carry on an unclosed row if there is one
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                async with db.execute("""
+                    SELECT id FROM watch_history
+                    WHERE session_id = ? AND item_id = ? AND end_time IS NULL
+                    ORDER BY start_time DESC LIMIT 1
+                """, (sess_id, now_item_id)) as cursor:
+                    existing = await cursor.fetchone()
+            if not existing:
+                await watch_data.record_watch_start(sess_id, session)
+        elif now_playing and now_item_id != prev_item_id:
+            if prev_item_id:
+                await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item_id)
+            await watch_data.record_watch_start(sess_id, session)
+        elif prev_playing and not now_playing:
+            await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item_id)
+
+        reasons = admin_summary.transcode_reasons(session)
+        if now_playing and reasons and (sess_id, now_item_id) not in self.reasons_recorded:
+            play_method = (session.get('PlayState') or {}).get('PlayMethod')
+            await watch_data.record_transcode(sess_id, now_item_id, play_method, reasons)
+            self.reasons_recorded.add((sess_id, now_item_id))
+        if not now_playing or now_item_id != prev_item_id:
+            self.reasons_recorded = {k for k in self.reasons_recorded
+                                     if k[0] != sess_id or k[1] == now_item_id}
+
+        self.active_sessions[sess_id] = session
+
+    async def post_viewing(self, viewing, channel, now: datetime):
+        """Send a viewing's post the first time, edit it after that."""
+        embed = viewings.embed(viewing, now)
+        if viewing.message is not None:
+            await self._edit({"message": viewing.message}, embed)
+            return
+        files = []
+        shown = viewing.shown(now)
+        poster = await self.poster_for((shown[0] if shown else viewing.current).item)
+        if poster:
+            files.append(discord.File(io.BytesIO(poster), filename="poster.jpg"))
+            embed.set_thumbnail(url="attachment://poster.jpg")
+        try:
+            viewing.message = await channel.send(embed=embed, files=files)
+        except discord.HTTPException as e:
+            print(f"Could not post a viewing: {e}")
+
+    async def check_transcodes(self, sessions, activity_channel):
+        """Warn once when TRANSCODE_WARNING streams are transcoding at the same
+        time, and again only after it has dropped below. In the admin channel
+        when there is one (#51)."""
+        transcoding = [s for s in sessions if (s.get('PlayState') or {}).get('PlayMethod') == 'Transcode']
+        if len(transcoding) < TRANSCODE_WARNING:
+            self.transcode_warned = False
+            return
+        if self.transcode_warned:
+            return
+        self.transcode_warned = True
+        channel = (self.bot.get_channel(config.ADMIN_CHANNEL_ID) if config.ADMIN_CHANNEL_ID else None) \
+            or activity_channel
+        embed = discord.Embed(
+            title="⚠️ High Transcode Load",
+            description=f"**{len(transcoding)} streams** are being transcoded at once",
+            color=discord.Color.orange(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="Who, and why", value=admin_summary.clip(
+            "\n".join(admin_summary.transcode_alert_lines(transcoding))), inline=False)
+        await channel.send(embed=embed)
 
 
 async def setup(bot):

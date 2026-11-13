@@ -12,9 +12,10 @@ Feature work and bugs are tracked in the
 | | |
 |---|---|
 | **Dashboard** | One message in a channel, edited every minute: server status and active streams |
-| **Activity feed** | Connections, playback starts, switches and stops with posters, and a warning at three transcodes. Two or more people on the same title at about the same point get one **🍿 Watching together** post instead, edited as people join and turned into **🎬 Watched together** at the end |
+| **Activity feed** | What people watch, not when they open an app: one post per sitting with the poster, **▶️ Now watching**, edited as they move on to the next episode and into **⏹️ Watched** with the time when they stop. Stopping and playing again within 10 minutes, on any device, carries on the same post. Plays under 5 minutes (browsing, sampling) are never posted. Two or more people on the same title at about the same point get one **🍿 Watching together** post instead, edited as people join and turned into **🎬 Watched together** at the end. Connections are not posted |
 | **Weekly digest** | Sundays at 6 PM: watch time, top shows, who watched most |
 | **New on EddyFlix** | Sundays a minute after the digest, in the same channel: what was added in the last 7 days. New films, new shows, and shows with new episodes on one line each ("The Simpsons · 25 new episodes · S09E01–E25"), with links and one uploaded poster grid. Skipped on a week with nothing new. `/jf-weekly-new` posts it now (owner only) |
+| **Admin channel** | Optional, private, for the owner (`ADMIN_CHANNEL_ID`). Sundays at 6 PM, or now with `/jf-admin-summary`: how many plays were transcoded and why, by device (Jellyfin's transcode reasons, recorded as plays happen); what was added to the library; who watched and which Jellyfin users have not used `/jf-link`; bot and Jellyfin health and disk space. The warning when three streams transcode at once goes here, once each time it happens; without the channel it stays in the activity feed. Sonarr, Radarr and Seerr are not in it yet: the bot has no API keys for them |
 | **Achievements and streaks** | Watch-time tiers with badges, popcorn from the cob up: Corn at 10 h, Kernel 50, Popcorn 100, Salted 250, Buttery Popcorn 500, Bottomless Bucket 1,000. Small versions are uploaded as the bot's own emojis at start-up, so the card shows the collection inline; finished series (every episode in the library watched), daily watch streaks, movie nights attended. `/jf-achievements` shows them as one card; `/jf-link`, or the 👤 button in `#roles`, ties a Discord member to their Jellyfin user |
 | **New-episode DMs** | `/jf-subscribe` to a show from the library and the bot DMs you when new episodes land, one message per show per batch ("6 new episodes of Fallout: S02E01–E06") with the poster and links. Checked every five minutes; a show still importing is held for ten minutes so a whole season is one message. Closed DMs get a mention in the activity channel instead |
 | **Find something to watch** | `/watch` searches films and shows and answers only you: poster, overview, runtime, a link to open it in Jellyfin and, once you have used `/jf-link`, where you left off (the next episode, or the time you stopped a film at) |
@@ -27,7 +28,7 @@ Feature work and bugs are tracked in the
 ### Commands
 
 `/jf-health` · `/jf-stats` · `/jf-status` · `/jf-recent` · `/jf-stats-graph` · `/jf-popular` ·
-`/jf-subscribe` · `/jf-unsubscribe` · `/jf-subscriptions` · `/jf-weekly-digest` · `/jf-weekly-new` ·
+`/jf-subscribe` · `/jf-unsubscribe` · `/jf-subscriptions` · `/jf-weekly-digest` · `/jf-weekly-new` · `/jf-admin-summary` ·
 `/jf-achievements` · `/jf-achievements-all` · `/jf-link` · `/jf-streaks` · `/jf-streaks-leaderboard` ·
 `/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/pick` · `/continue` · `/movienight` · `/movievote` · `/spoiler` · `/unspoiler` · `/movienight-history`
 
@@ -105,6 +106,7 @@ services:
       - DISCORD_TOKEN=${DISCORD_BOT_TOKEN:?}
       - DASHBOARD_CHANNEL_ID=${DASHBOARD_CHANNEL_ID:-0}
       - ACTIVITY_CHANNEL_ID=${ACTIVITY_CHANNEL_ID:-0}
+      - ADMIN_CHANNEL_ID=${ADMIN_CHANNEL_ID:-0}
     volumes:
       - ./data:/app/data        # SQLite: watch history, streaks, subscriptions. Owned by uid 1000
     restart: unless-stopped
@@ -132,12 +134,14 @@ All settings are in [.env.example](.env.example).
 | `checks.py` | The owner-only check and the slash-command error handler |
 | `selftest.py` | Read-only checks against the live Jellyfin and the database, run after each deploy and by `/jf-selftest` |
 | `parties.py` | Working out watch parties from Jellyfin's sessions |
+| `viewings.py` | The feed's one post per sitting: following plays, the short-play rule, the post |
+| `admin_summary.py` | The weekly admin summary's sections, and Jellyfin's transcode reasons in words |
 | `screenings.py` | Movie night timing: when to remind, start and end, who attended, the recap |
 | `new_episodes.py` | Finding newly added episodes and grouping them for subscription DMs |
 | `new_this_week.py` | The weekly "New on EddyFlix" post: what was added in 7 days, grouped, and its poster grid |
 | `ratings.py` | Movie night ratings: who may rate, the persistent 🍿 buttons, the history lines |
 | `tiers.py` | Watch-time tiers and drawing their badges. Art in `assets/`, licences in [assets/LICENSES.md](assets/LICENSES.md) |
-| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `weekly_new` (New on EddyFlix), `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night` (and `#roles`: the picker, the Jellyfin link button and the guide), `movie_history` (`/movienight-history`), `spoiler`, `watch` (with `/pick` and `/continue`), `help` |
+| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `weekly_new` (New on EddyFlix), `admin` (the weekly admin summary), `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night` (and `#roles`: the picker, the Jellyfin link button and the guide), `movie_history` (`/movienight-history`), `spoiler`, `watch` (with `/pick` and `/continue`), `help` |
 
 Background loops start when the bot dispatches `services_ready`, ten seconds after it connects
 and has set up the database and the movie night channels. Each cog with a loop listens for it.
@@ -160,7 +164,7 @@ Three layers, from cheapest to the real thing:
    time parsing, the role picker (and its Spoiler Alert lock), the Jellyfin link
    menu and the getting-started guide, `/spoiler` expiry, streaks and achievements against a throwaway database, movie
    night timing and attendance, movie night ratings and history, new-episode batching, the weekly
-   "new this week" grouping and poster grid, the command set, and the Discord calls
+   "new this week" grouping and poster grid, the feed's viewing posts, the admin summary, the command set, and the Discord calls
    against fake objects. `tests/test_recorded_jellyfin.py` runs `/watch` and the new-episode DMs
    against **real Jellyfin responses** in `tests/fixtures/jellyfin/`, recorded from the server
    (trimmed, no user names) by `tests/fixtures/record_jellyfin.py`. Re-record when Jellyfin is
@@ -170,8 +174,8 @@ Three layers, from cheapest to the real thing:
 3. **`/jf-selftest`** in Discord, owner only, once per release: the same checks plus the ones only
    Discord can answer. It DMs you samples of the new-episode DM, the movie night reminder and the
    recap; creates, starts, ends and deletes a private test event in 🎥 Theatre; checks the bot can
-   post and ping Ticket Holders in `#movie-night`; and, if you are in Theatre, that it sees you.
-   It pings nobody and leaves nothing behind
+   post and ping Ticket Holders in `#movie-night`, and post in the admin channel if there is one;
+   and, if you are in Theatre, that it sees you. It pings nobody and leaves nothing behind
 
 What only a real night shows: how quickly Discord ends an empty live event, and the recap with
 real people.
