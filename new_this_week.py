@@ -141,9 +141,24 @@ def line(entry: Entry, link: str | None) -> str:
 SECTIONS = [("film", "🎬 New films"), ("show", "📺 New shows"), ("episodes", "➕ New episodes")]
 
 
-def description(entries: list[Entry], link_for, start: datetime, end: datetime) -> str:
-    """The embed's text: the dates, then a section per kind. link_for(item_id)
-    gives a link or None. Cut short with "…and N more" past Discord's limit."""
+def request_line(command_on: bool, seerr_url: str) -> str | None:
+    """The last line, pointing to requests: /request when the bot can reach Seerr,
+    a link to Seerr when its public address is set, None when neither."""
+    if command_on and seerr_url:
+        return f"🙋 Missing something? Ask for it with `/request`, or on [Seerr]({seerr_url})."
+    if command_on:
+        return "🙋 Missing something? Ask for it with `/request`."
+    if seerr_url:
+        return f"🙋 Missing something? Ask for it on [Seerr]({seerr_url})."
+    return None
+
+
+def description(entries: list[Entry], link_for, start: datetime, end: datetime, tail: str | None = None) -> str:
+    """The embed's text: the dates, then a section per kind, then tail if given
+    (the request line). link_for(item_id) gives a link or None. Cut short with
+    "…and N more" past Discord's limit, always leaving room for the tail."""
+    limit = DESCRIPTION_LIMIT - (len(tail) + 2 if tail else 0)
+    end_with = [f"\n{tail}"] if tail else []
     out = [f"Added {start:%b} {start.day} – {end:%b} {end.day}"]
     shown = 0
     for kind, heading in SECTIONS:
@@ -153,13 +168,13 @@ def description(entries: list[Entry], link_for, start: datetime, end: datetime) 
         out.append(f"\n**{heading}**")
         for e in group:
             text = line(e, link_for(e.item_id) if e.item_id else None)
-            if len("\n".join(out + [text])) > DESCRIPTION_LIMIT:
+            if len("\n".join(out + [text])) > limit:
                 if out[-1].startswith("\n**"):
                     out.pop()
-                return "\n".join(out + [f"…and {len(entries) - shown} more"])
+                return "\n".join(out + [f"…and {len(entries) - shown} more"] + end_with)
             out.append(text)
             shown += 1
-    return "\n".join(out)
+    return "\n".join(out + end_with)
 
 
 def counts(entries: list[Entry]) -> str:

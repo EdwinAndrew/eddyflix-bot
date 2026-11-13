@@ -1,7 +1,9 @@
 """The activity feed, polled every 30 seconds: one post per viewing (viewings.py),
 one per watch party (parties.py), and a warning when too much is transcoding.
 
-Also where watch history gets recorded, since that follows the same sessions.
+Also where watch history gets recorded, since that follows the same sessions,
+and where the end of a play is noticed for the catch-up subscription offer
+(catch_up.py).
 """
 import io
 from datetime import datetime
@@ -115,9 +117,11 @@ class Activity(commands.Cog):
 
             for sess_id in set(self.active_sessions) - current_session_ids:
                 # Record the end of anything still playing when the session went away
-                prev_item = self.active_sessions.pop(sess_id).get('NowPlayingItem')
+                prev_session = self.active_sessions.pop(sess_id)
+                prev_item = prev_session.get('NowPlayingItem')
                 if prev_item:
                     await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item.get('Id'))
+                    await self.play_ended(prev_session)
             self.reasons_recorded = {k for k in self.reasons_recorded if k[0] in current_session_ids}
 
             # Connections are not posted: Jellyfin opens a session whenever
@@ -157,9 +161,11 @@ class Activity(commands.Cog):
         elif now_playing and now_item_id != prev_item_id:
             if prev_item_id:
                 await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item_id)
+                await self.play_ended(self.active_sessions[sess_id])
             await watch_data.record_watch_start(sess_id, session)
         elif prev_playing and not now_playing:
             await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item_id)
+            await self.play_ended(self.active_sessions[sess_id])
 
         reasons = admin_summary.transcode_reasons(session)
         if now_playing and reasons and (sess_id, now_item_id) not in self.reasons_recorded:
@@ -171,6 +177,19 @@ class Activity(commands.Cog):
                                      if k[0] != sess_id or k[1] == now_item_id}
 
         self.active_sessions[sess_id] = session
+
+    async def play_ended(self, last_seen: dict):
+        """A play ended; last_seen is its session at the last poll, with how far
+        in it was. Someone who just caught up on a show may get offered
+        new-episode DMs (cogs/subscriptions.py). Never stops the poll."""
+        get_cog = getattr(self.bot, "get_cog", None)
+        subscriptions = get_cog("Subscriptions") if get_cog else None
+        if subscriptions is None:
+            return
+        try:
+            await subscriptions.offer_if_caught_up(last_seen)
+        except Exception as e:
+            print(f"Could not check for a catch-up offer: {e}")
 
     async def post_viewing(self, viewing, channel, now: datetime):
         """Send a viewing's post the first time, edit it after that."""

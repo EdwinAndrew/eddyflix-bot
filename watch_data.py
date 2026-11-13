@@ -219,6 +219,19 @@ async def init_database():
             )
         """)
 
+        # The 🔔 "tell me when new episodes land" offer, made once per member per
+        # show when they catch up on it (catch_up.py). A row means it was offered,
+        # whatever they did with it, so it is never offered again
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS subscription_offers (
+                discord_user_id TEXT NOT NULL,
+                series_id TEXT NOT NULL,
+                series_name TEXT NOT NULL,
+                offered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (discord_user_id, series_id)
+            )
+        """)
+
         await db.commit()
         print("Database initialized successfully")
 

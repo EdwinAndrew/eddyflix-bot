@@ -1,5 +1,6 @@
 """The weekly "New on EddyFlix" post: Sundays just after the digest, in the same
-channel, or now with /jf-weekly-new (owner only). Skipped on a week with nothing new."""
+channel, or now with /jf-weekly-new (owner only). Skipped on a week with nothing new.
+Ends with a line pointing to /request and Seerr, when Seerr is set up."""
 import io
 from datetime import datetime, time, timezone
 
@@ -52,7 +53,9 @@ class WeeklyNew(commands.Cog):
                 print(f"New on EddyFlix: no poster for {entry.name}: {e}")
         png = nw.render_grid(entries, posters, start, end)
         embed = discord.Embed(title="🆕 New on EddyFlix this week",
-                              description=nw.description(entries, details_link, start, end),
+                              description=nw.description(entries, details_link, start, end,
+                                                         nw.request_line(bool(config.SEERR_URL and config.SEERR_API_KEY),
+                                                                         config.SEERR_PUBLIC_URL)),
                               colour=discord.Colour(nw.COLOUR))
         embed.set_image(url="attachment://new-this-week.png")
         embed.set_footer(text=nw.counts(entries))
