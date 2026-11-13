@@ -73,3 +73,59 @@ def test_clearing_removes_only_flairs():
 
     assert member.roles == [ticket]
     assert interaction.response.sent[0] == ("Flairs cleared.", True)
+
+
+def test_spoiler_time_keeps_spoiler_alert_on():
+    roles, ticket, guild_roles = setup()
+    spoiler, other = mn.SPOILER_FLAIR, mn.FLAIRS[0]
+    member = Member([roles[spoiler.label], ticket])
+    interaction = interaction_for(member, guild_roles)
+
+    asyncio.run(mn.set_flairs(interaction, [other], locked_until=1_800_000_000))
+
+    assert set(member.roles) == {roles[spoiler.label], roles[other.label], ticket}   # the rest still applies
+    content, ephemeral = interaction.response.sent[0]
+    assert ephemeral and "stays on until <t:1800000000:f>" in content and other.role_name in content
+
+
+def test_spoiler_time_survives_remove_my_flairs():
+    roles, ticket, guild_roles = setup()
+    member = Member([roles[f.label] for f in mn.FLAIRS[:6]])   # Spoiler Alert is fifth
+    interaction = interaction_for(member, guild_roles)
+
+    asyncio.run(mn.set_flairs(interaction, [], locked_until=1_800_000_000))
+
+    assert member.roles == [roles[mn.SPOILER_FLAIR.label]]
+    assert interaction.response.sent[0][0].startswith("Flairs cleared, but")
+
+
+def test_spoiler_alert_can_go_once_the_time_is_up():
+    roles, ticket, guild_roles = setup()
+    member = Member([roles[mn.SPOILER_FLAIR.label]])
+    interaction = interaction_for(member, guild_roles)
+
+    asyncio.run(mn.set_flairs(interaction, [], locked_until=None))
+
+    assert member.roles == []
+    assert interaction.response.sent[0] == ("Flairs cleared.", True)
+
+
+def test_keeping_spoiler_alert_by_choice_says_nothing_extra():
+    roles, ticket, guild_roles = setup()
+    member = Member([])
+    interaction = interaction_for(member, guild_roles)
+
+    asyncio.run(mn.set_flairs(interaction, [mn.SPOILER_FLAIR], locked_until=1_800_000_000))
+
+    assert member.roles == [roles[mn.SPOILER_FLAIR.label]]
+    assert "stays on" not in interaction.response.sent[0][0]
+
+
+def test_picker_custom_ids_are_stable():
+    async def make():
+        return mn.RolePicker()
+    view = asyncio.run(make())
+    # Changing these breaks the buttons on the message already posted in #roles
+    assert {c.custom_id for c in view.children} == {
+        "movienight:flairs", "movienight:ticket", "movienight:clear", "movienight:link"}
+    assert view.timeout is None

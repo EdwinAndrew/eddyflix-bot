@@ -22,6 +22,7 @@ EXTENSIONS = [
     "cogs.subscriptions",
     "cogs.achievements",
     "cogs.movie_night",
+    "cogs.spoiler",
     "cogs.watch",
     "cogs.selftest",
     "cogs.help",
@@ -41,7 +42,7 @@ class EddyFlixBot(commands.Bot):
     async def setup_hook(self):
         for extension in EXTENSIONS:
             await self.load_extension(extension)
-        # Re-attach the #roles picker's buttons, which outlive the process.
+        # Re-attach the #roles picker's buttons (flairs, ticket, Jellyfin link), which outlive the process.
         self.add_view(movie_night.RolePicker())
 
     async def on_ready(self):
