@@ -577,7 +577,7 @@ class MovieNight(commands.Cog):
         if present and event.status is discord.EventStatus.scheduled:
             try:   # shows the event as live
                 await event.start(reason="Movie night time")
-            except discord.HTTPException as e:
+            except (discord.HTTPException, ValueError) as e:
                 print(f"Could not start the event for {night['title']}: {e}")
         if present:
             self.empty_since.pop(event_id, None)
@@ -615,7 +615,7 @@ class MovieNight(commands.Cog):
         if event.status is discord.EventStatus.active:
             try:
                 await event.end(reason="Movie night over")
-            except discord.HTTPException as e:
+            except (discord.HTTPException, ValueError) as e:
                 print(f"Could not end the event for {night['title']}: {e}")
         attended, dropped = screenings.split_attendance(await watch_data.theatre_minutes(night["event_id"]))
         announce = self.channels(guild)[0]
