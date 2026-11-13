@@ -40,11 +40,13 @@ async def event_round_trip(guild, theatre, now) -> selftest.Check:
             channel=theatre, privacy_level=discord.PrivacyLevel.guild_only,
             description="Made by /jf-selftest and deleted straight away.", reason="/jf-selftest")
         steps.append("created")
-        await event.start(reason="/jf-selftest")
+        # start() and end() return the updated event and leave the old object as it
+        # was: ending the old one raises ValueError "This scheduled event is not active"
+        event = await event.start(reason="/jf-selftest")
         steps.append("started")
-        await event.end(reason="/jf-selftest")
+        event = await event.end(reason="/jf-selftest")
         steps.append("ended")
-    except discord.HTTPException as e:
+    except Exception as e:   # anything: the event must still be deleted below
         error = e
     if event is not None:
         try:

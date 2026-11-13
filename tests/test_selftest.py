@@ -124,8 +124,12 @@ def http_error(status=403, text="Missing Permissions"):
 
 
 class FakeEvent:
-    def __init__(self, fail_at=None):
-        self.fail_at, self.calls = fail_at, []
+    """Like discord.py's ScheduledEvent: start() and end() return a new object and
+    leave this one as it was, and end() refuses an event that is not active."""
+
+    def __init__(self, fail_at=None, calls=None, status=discord.EventStatus.scheduled):
+        self.fail_at, self.status = fail_at, status
+        self.calls = calls if calls is not None else []
 
     async def _step(self, name):
         self.calls.append(name)
@@ -134,9 +138,13 @@ class FakeEvent:
 
     async def start(self, reason=None):
         await self._step("start")
+        return FakeEvent(self.fail_at, self.calls, discord.EventStatus.active)
 
     async def end(self, reason=None):
+        if self.status is not discord.EventStatus.active:
+            raise ValueError("This scheduled event is not active.")
         await self._step("end")
+        return FakeEvent(self.fail_at, self.calls, discord.EventStatus.completed)
 
     async def delete(self, reason=None):
         await self._step("delete")
@@ -172,6 +180,17 @@ def test_event_is_deleted_even_when_starting_fails():
     assert check.ok is False
     assert event.calls == ["start", "delete"]
     assert check.detail == "created → deleted → failed: Missing Permissions"
+
+
+def test_event_is_deleted_whatever_goes_wrong():
+    class Broken(FakeEvent):
+        async def start(self, reason=None):
+            self.calls.append("start")
+            raise ValueError("This scheduled event is not active.")
+    event = Broken()
+    check = asyncio.run(cog.event_round_trip(FakeGuild(event), theatre=object(), now=NOW))
+    assert check.ok is False and event.calls == ["start", "delete"]
+    assert "not active" in check.detail
 
 
 def test_event_left_behind_says_so():
