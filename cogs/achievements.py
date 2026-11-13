@@ -46,8 +46,9 @@ def watch_time_field(hours: float) -> str:
 
 def achievement_card(user_name: str, summary: dict, linked: bool,
                      limit: int = 20) -> tuple[discord.Embed, discord.File | None]:
-    """One compact embed: watch time, streak, finished series. The current
-    tier's badge comes with it as a file, shown in the corner."""
+    """One compact embed: watch time, streak, movie nights (once there are any),
+    finished series. The current tier's badge comes with it as a file, shown in
+    the corner."""
     tier = tiers.current_tier(summary["hours"])
     embed = discord.Embed(title=f"🏅 {user_name}",
                           colour=discord.Colour(tier.colour) if tier else discord.Colour.dark_grey())
@@ -67,6 +68,10 @@ def achievement_card(user_name: str, summary: dict, linked: bool,
     else:
         streak_line = "No streak yet"
     embed.add_field(name="🔥 Streak", value=streak_line, inline=True)
+
+    nights = summary.get("movie_nights", 0)
+    if nights:
+        embed.add_field(name="🎬 Movie nights", value=f"**{nights}** attended in the Theatre", inline=False)
 
     series = summary["series"]
     lines = []
@@ -134,9 +139,12 @@ class Achievements(commands.Cog):
         await interaction.response.defer()
 
         try:
+            asked_for = user_name
             user_name, linked = await self.resolve_user(interaction, user_name)
-            summary = await watch_data.achievement_summary(user_name)
-            if not (summary["hours"] or summary["series"] or summary["streak"]):
+            # Movie nights go by Discord member: count the caller's own when the
+            # card is theirs, linked or not
+            summary = await watch_data.achievement_summary(user_name, None if asked_for else interaction.user.id)
+            if not (summary["hours"] or summary["series"] or summary["streak"] or summary["movie_nights"]):
                 hint = "" if linked else "\nIs your Jellyfin name different? Link it with `/jf-link`."
                 await interaction.followup.send(f"No watch history for **{user_name}** yet.{hint}")
                 return

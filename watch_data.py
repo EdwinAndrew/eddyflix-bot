@@ -5,6 +5,7 @@ from datetime import datetime
 import aiosqlite
 
 import config
+import screenings
 import tiers
 
 # Python 3.12 deprecated sqlite3's built-in datetime adapter. This registers the
@@ -118,6 +119,35 @@ async def init_database():
                 last_watch_date TEXT,
                 streak_start_date TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Movie nights from /movienight, followed through reminder, start and
+        # recap (#16). Times are UTC. status: scheduled, live, done (recapped),
+        # cancelled, gone (deleted in Discord) or missed (the bot was down)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS movie_nights (
+                event_id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                film_name TEXT NOT NULL,
+                item_id TEXT,
+                host TEXT,
+                start_time TIMESTAMP NOT NULL,
+                end_time TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                status TEXT NOT NULL DEFAULT 'scheduled',
+                reminded BOOLEAN DEFAULT 0
+            )
+        """)
+
+        # Minutes each Discord member spent in the Theatre while a night was live
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS movie_night_attendance (
+                event_id TEXT NOT NULL,
+                discord_user_id TEXT NOT NULL,
+                minutes INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (event_id, discord_user_id)
             )
         """)
 
@@ -402,11 +432,104 @@ async def set_link(discord_user_id: int, jellyfin_user: str):
         await db.commit()
 
 
+# --- Movie nights ---------------------------------------------------------------
+
+NIGHT_FIELDS = ("event_id", "guild_id", "title", "film_name", "item_id", "host",
+                "start_time", "end_time", "created_at", "status", "reminded")
+
+
+async def add_movie_night(event_id: int, guild_id: int, title: str, film_name: str, item_id: str | None,
+                          host: str | None, start: datetime, end: datetime, created: datetime):
+    """Start following a night. A night already known is left as it is."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        await db.execute("""
+            INSERT OR IGNORE INTO movie_nights
+            (event_id, guild_id, title, film_name, item_id, host, start_time, end_time, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (str(event_id), str(guild_id), title, film_name, item_id, host, start, end, created))
+        await db.commit()
+
+
+async def open_movie_nights() -> list[dict]:
+    """Nights that are scheduled or live, oldest first."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute(f"""
+            SELECT {", ".join(NIGHT_FIELDS)} FROM movie_nights
+            WHERE status IN ('scheduled', 'live') ORDER BY start_time
+        """) as cur:
+            rows = await cur.fetchall()
+    nights = []
+    for row in rows:
+        night = dict(zip(NIGHT_FIELDS, row))
+        for key in ("start_time", "end_time", "created_at"):
+            night[key] = datetime.fromisoformat(night[key])
+        night["reminded"] = bool(night["reminded"])
+        nights.append(night)
+    return nights
+
+
+async def update_movie_night(event_id, **fields):
+    """Set status, reminded, start_time or end_time."""
+    allowed = {k: v for k, v in fields.items() if k in ("status", "reminded", "start_time", "end_time")}
+    if not allowed:
+        return
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        await db.execute(f"UPDATE movie_nights SET {', '.join(f'{k} = ?' for k in allowed)} WHERE event_id = ?",
+                         (*allowed.values(), str(event_id)))
+        await db.commit()
+
+
+async def add_theatre_minutes(event_id, discord_ids, minutes: int = 1):
+    if not discord_ids:
+        return
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        await db.executemany("""
+            INSERT INTO movie_night_attendance (event_id, discord_user_id, minutes) VALUES (?, ?, ?)
+            ON CONFLICT(event_id, discord_user_id) DO UPDATE SET minutes = minutes + excluded.minutes
+        """, [(str(event_id), str(uid), minutes) for uid in discord_ids])
+        await db.commit()
+
+
+async def theatre_minutes(event_id) -> dict[int, int]:
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("SELECT discord_user_id, minutes FROM movie_night_attendance WHERE event_id = ?",
+                              (str(event_id),)) as cur:
+            return {int(uid): minutes for uid, minutes in await cur.fetchall()}
+
+
+async def movie_nights_attended(discord_ids, db=None) -> int:
+    """Finished nights any of these Discord members attended, each night once."""
+    ids = [str(i) for i in discord_ids]
+    if not ids:
+        return 0
+    sql = f"""
+        SELECT COUNT(DISTINCT a.event_id) FROM movie_night_attendance a
+        JOIN movie_nights n ON n.event_id = a.event_id
+        WHERE n.status = 'done' AND a.minutes >= ? AND a.discord_user_id IN ({", ".join("?" * len(ids))})
+    """
+
+    async def count(db):
+        async with db.execute(sql, (screenings.ATTEND_MINUTES, *ids)) as cur:
+            return (await cur.fetchone())[0]
+    if db is not None:
+        return await count(db)
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        return await count(db)
+
+
 # --- Reading for the achievements card ----------------------------------------
 
-async def achievement_summary(user_name: str) -> dict:
-    """Everything the achievements card shows for one user."""
+async def achievement_summary(user_name: str, discord_id: int | None = None) -> dict:
+    """Everything the achievements card shows for one user. Movie nights are
+    counted per Discord member: every one linked to user_name, plus discord_id
+    (the caller, when they have not linked yet)."""
     async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("SELECT discord_user_id FROM user_links WHERE jellyfin_user = ?",
+                              (user_name,)) as cur:
+            discord_ids = {r[0] for r in await cur.fetchall()}
+        if discord_id is not None:
+            discord_ids.add(str(discord_id))
+        movie_nights = await movie_nights_attended(discord_ids, db)
         async with db.execute("""
             SELECT SUM(duration_seconds) FROM watch_history
             WHERE user_name = ? AND duration_seconds IS NOT NULL
@@ -426,4 +549,5 @@ async def achievement_summary(user_name: str) -> dict:
         "streak_milestones": sorted(v for t, _, v, _, _ in rows if t == 'streak_milestone'),
         "series": [(name, value, total, earned) for t, name, value, total, earned in rows if t == 'series_completion'],
         "streak": streak,   # (current, longest) or None
+        "movie_nights": movie_nights,
     }

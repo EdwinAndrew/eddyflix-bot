@@ -60,3 +60,11 @@ def test_timestamps_utc_vs_local():
     # SQLite's CURRENT_TIMESTAMP is UTC; the bot's own isoformat() is Toronto time.
     assert earned_unix("2026-10-22 18:00:00") == earned_unix("2026-10-22T14:00:00")
     assert earned_unix("garbage") is None
+
+
+def test_movie_nights_only_once_there_are_some():
+    assert "🎬 Movie nights" not in fields(card(SUMMARY))         # older summaries have no count
+    assert "🎬 Movie nights" not in fields(card({**SUMMARY, "movie_nights": 0}))
+    shown = card({**SUMMARY, "movie_nights": 3})
+    assert fields(shown)["🎬 Movie nights"] == "**3** attended in the Theatre"
+    assert [f.name for f in shown.fields][2] == "🎬 Movie nights"    # before the series list

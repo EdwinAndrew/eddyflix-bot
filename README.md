@@ -14,9 +14,9 @@ Feature work and bugs are tracked in the
 | **Dashboard** | One message in a channel, edited every minute: server status and active streams |
 | **Activity feed** | Connections, playback starts, switches and stops with posters, and a warning at three transcodes. Two or more people on the same title at about the same point get one **🍿 Watching together** post instead, edited as people join and turned into **🎬 Watched together** at the end |
 | **Weekly digest** | Sundays at 6 PM: watch time, top shows, who watched most |
-| **Achievements and streaks** | Watch-time tiers with badges, popcorn from the cob up: Corn at 10 h, Kernel 50, Popcorn 100, Salted 250, Buttery Popcorn 500, Bottomless Bucket 1,000. Small versions are uploaded as the bot's own emojis at start-up, so the card shows the collection inline; finished series (every episode in the library watched), daily watch streaks. `/jf-achievements` shows them as one card; `/jf-link` ties a Discord member to their Jellyfin user |
+| **Achievements and streaks** | Watch-time tiers with badges, popcorn from the cob up: Corn at 10 h, Kernel 50, Popcorn 100, Salted 250, Buttery Popcorn 500, Bottomless Bucket 1,000. Small versions are uploaded as the bot's own emojis at start-up, so the card shows the collection inline; finished series (every episode in the library watched), daily watch streaks, movie nights attended. `/jf-achievements` shows them as one card; `/jf-link` ties a Discord member to their Jellyfin user |
 | **Find something to watch** | `/watch` searches films and shows and answers only you: poster, overview, runtime, a link to open it in Jellyfin and, once you have used `/jf-link`, where you left off (the next episode, or the time you stopped a film at) |
-| **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`. See below |
+| **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`, a reminder 15 minutes before, the event shown as live, and a recap of who was in the Theatre. See below |
 | **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push |
 
 ### Commands
@@ -42,6 +42,21 @@ On start the bot creates whatever is missing, and never deletes anything:
   and posts an announcement with the poster and SyncPlay steps. **SyncPlay does not open the film
   for the others**: everyone opens the same film, joins the group, then playback stays in sync
 - **`/movievote`**: a Discord poll of up to four films, random ones if none are given
+- **On the night** the bot follows every event it made, checking once a minute. Discord's own
+  reminder only reaches people who pressed *Interested*, so:
+  - **15 minutes before**, Ticket Holders get a ping in `#movie-night` with the SyncPlay steps
+    again. Not when the night was announced less than half an hour before
+  - **From the start time** it counts who is in 🎥 Theatre, and starts the Discord event (shown
+    as live) once someone is there. Discord ends a voice event a few minutes after its channel
+    empties, so starting it into an empty channel would end it before anyone came
+  - **At the end time** (runtime + 15 minutes), or once the Theatre has been empty for 15
+    minutes in the second half, it ends the event and posts who was there. **15 minutes in the
+    Theatre counts as attending**; less is listed as *dropped by*. The count goes on
+    `/jf-achievements`, per Discord member, so it shows up once someone uses `/jf-link`
+  - A cancelled or deleted event is dropped without a recap. An event Discord ends early, or
+    someone ends by hand, does not end the night: the bot keeps counting until the end time
+  - Nights are kept in the database, so a restart neither repeats the reminder or the recap nor
+    loses the minutes counted. Events made before this existed are picked up from Discord
 
 Names in [cogs/movie_night.py](cogs/movie_night.py) are the source of truth. Rename a role there, not in
 Discord, or the bot recreates the old name.
@@ -88,6 +103,7 @@ All settings are in [.env.example](.env.example).
 | `watch_data.py` | The SQLite database: recording plays, streaks, achievements |
 | `checks.py` | The owner-only check and the slash-command error handler |
 | `parties.py` | Working out watch parties from Jellyfin's sessions |
+| `screenings.py` | Movie night timing: when to remind, start and end, who attended, the recap |
 | `tiers.py` | Watch-time tiers and drawing their badges. Art in `assets/`, licences in [assets/LICENSES.md](assets/LICENSES.md) |
 | `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions`, `achievements`, `movie_night`, `watch`, `help` |
 
@@ -105,7 +121,7 @@ set -a; . ./.env; set +a; python bot.py
 ```
 
 **Tests** live in `tests/`: time parsing, the role picker, streaks and achievements against a
-throwaway database, and the command set. CI runs them on every push and pull request, before
+throwaway database, movie night timing and attendance, and the command set. CI runs them on every push and pull request, before
 anything is built.
 
 **Releasing:** merge to `main`, then tag `vX.Y.Z` and push the tag. The workflow runs the tests,
