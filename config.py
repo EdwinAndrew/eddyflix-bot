@@ -25,4 +25,9 @@ SEERR_PUBLIC_URL = os.getenv("SEERR_PUBLIC_URL", "").rstrip("/")
 # the pushes stop. Optional: empty means file only.
 UPTIME_KUMA_PUSH_URL = os.getenv("UPTIME_KUMA_PUSH_URL", "")
 
+# Seerr, for /request: its address inside the Docker network (http://seerr:5055)
+# and its API key from Settings → General. Either empty means /request is off.
+SEERR_URL = os.getenv("SEERR_URL", "").rstrip("/")
+SEERR_API_KEY = os.getenv("SEERR_API_KEY", "")
+
 DB_PATH = "/app/data/jellyfin_bot.db"

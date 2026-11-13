@@ -29,6 +29,7 @@ EXTENSIONS = [
     "cogs.movie_history",
     "cogs.watch",
     "cogs.selftest",
+    "cogs.requests",
     "cogs.help",
 ]
 

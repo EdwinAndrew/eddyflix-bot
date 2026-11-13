@@ -199,6 +199,26 @@ async def init_database():
             )
         """)
 
+        # Seerr requests made with /request, one row per request and member
+        # waiting for it, so each gets one DM when it is ready (#45). seasons is
+        # "1,2,3" for a show. state: waiting, ready (announced), declined or gone
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS seerr_requests (
+                request_id INTEGER NOT NULL,
+                discord_user_id TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                tmdb_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                poster_path TEXT,
+                seasons TEXT,
+                seerr_user_id INTEGER,
+                requested_at TIMESTAMP NOT NULL,
+                state TEXT NOT NULL DEFAULT 'waiting',
+                settled_at TIMESTAMP,
+                PRIMARY KEY (request_id, discord_user_id)
+            )
+        """)
+
         await db.commit()
         print("Database initialized successfully")
 

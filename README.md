@@ -22,6 +22,7 @@ Feature work and bugs are tracked in the
 | **Getting started** | A guide in `#roles` for newcomers: how to get an account, which app on an LG TV, an iPhone or in a browser, the address, where to request things, and what to do on Discord after. The picker next to it has a **Which Jellyfin user are you?** button, the same as `/jf-link` without knowing the command |
 | **Pick something** | `/pick` picks a random film or show, with the same card as `/watch` and a **🎲 Reroll** button that swaps it in place (it goes after ten minutes unused). Narrow it by type, genre (from the library) and length (for a show, the episode length). Once you have used `/jf-link` it picks only what you haven't watched, or haven't finished for a show, unless you ask for `include_watched` |
 | **Continue watching** | `/continue` lists what you were in the middle of, up to eight, newest first and linked to Jellyfin: films you stopped part-way, and for each show the episode you stopped in or the next one. Only you see it; it needs `/jf-link` |
+| **Requests** | `/request` searches Seerr for any film or show and answers only you: poster, overview, and whether it is in the library, partly there, already requested, or can be requested. A button sends the request (for a show: all missing seasons, or just the latest), made as your Seerr user once you have used `/jf-link`. When it can be watched the bot DMs you the poster and a Jellyfin link; for a show, once every season you asked for is at least partly in. Checked every five minutes. Closed DMs get a mention in the activity channel instead. Off unless `SEERR_URL` and `SEERR_API_KEY` are set |
 | **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`, a reminder 15 minutes before, the event shown as live, a recap of who was in the Theatre with a 1–5 🍿 rating, and `/movienight-history`. `/spoiler` puts someone in *Spoiler Alert* for a while. See below |
 | **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push. `/jf-selftest` (owner) checks everything end to end; see [Testing](#testing) |
 
@@ -30,7 +31,7 @@ Feature work and bugs are tracked in the
 `/jf-health` · `/jf-stats` · `/jf-status` · `/jf-recent` · `/jf-stats-graph` · `/jf-popular` ·
 `/jf-subscribe` · `/jf-unsubscribe` · `/jf-subscriptions` · `/jf-weekly-digest` · `/jf-weekly-new` · `/jf-admin-summary` ·
 `/jf-achievements` · `/jf-achievements-all` · `/jf-link` · `/jf-streaks` · `/jf-streaks-leaderboard` ·
-`/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/pick` · `/continue` · `/movienight` · `/movievote` · `/spoiler` · `/unspoiler` · `/movienight-history`
+`/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/request` · `/pick` · `/continue` · `/movienight` · `/movievote` · `/spoiler` · `/unspoiler` · `/movienight-history`
 
 ### Movie night
 
@@ -116,6 +117,10 @@ All settings are in [.env.example](.env.example).
 
 - **Jellyfin:** an API key from *Dashboard → API Keys*. Jellyfin 12 accepts it only as
   `Authorization: MediaBrowser Token="…"`, which is what the bot sends
+- **Seerr (optional, for `/request`):** `SEERR_URL=http://seerr:5055` and the API key from
+  *Settings → General*. The key acts as Seerr's admin, which lets the bot make a request as the
+  member's own Seerr user (their quota and approval rules apply). Members who have not used
+  `/jf-link`, or whose Jellyfin user is not in Seerr, request with the admin account
 - **Discord:** a bot with the *Message Content* intent. Invite it with
   `scope=bot+applications.commands` and `permissions=18700556168272` (post, embed, attach, react,
   manage channels, roles, messages and events, create events, timeout members). Its role must sit
@@ -130,6 +135,8 @@ All settings are in [.env.example](.env.example).
 | `bot.py` | Entry point: the bot class, start-up order, loading the cogs |
 | `config.py` | Settings from the environment |
 | `jellyfin_client.py` | Jellyfin API calls |
+| `seerr_client.py` | Seerr API calls, for `/request` |
+| `media_requests.py` | What Seerr says about a title, which seasons to offer, and when a request is ready to announce |
 | `watch_data.py` | The SQLite database: recording plays, streaks, achievements |
 | `checks.py` | The owner-only check and the slash-command error handler |
 | `selftest.py` | Read-only checks against the live Jellyfin and the database, run after each deploy and by `/jf-selftest` |
@@ -141,7 +148,7 @@ All settings are in [.env.example](.env.example).
 | `new_this_week.py` | The weekly "New on EddyFlix" post: what was added in 7 days, grouped, and its poster grid |
 | `ratings.py` | Movie night ratings: who may rate, the persistent 🍿 buttons, the history lines |
 | `tiers.py` | Watch-time tiers and drawing their badges. Art in `assets/`, licences in [assets/LICENSES.md](assets/LICENSES.md) |
-| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `weekly_new` (New on EddyFlix), `admin` (the weekly admin summary), `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night` (and `#roles`: the picker, the Jellyfin link button and the guide), `movie_history` (`/movienight-history`), `spoiler`, `watch` (with `/pick` and `/continue`), `help` |
+| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `weekly_new` (New on EddyFlix), `admin` (the weekly admin summary), `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `requests` (and the Seerr poll), `achievements`, `movie_night` (and `#roles`: the picker, the Jellyfin link button and the guide), `movie_history` (`/movienight-history`), `spoiler`, `watch` (with `/pick` and `/continue`), `help` |
 
 Background loops start when the bot dispatches `services_ready`, ten seconds after it connects
 and has set up the database and the movie night channels. Each cog with a loop listens for it.
@@ -163,7 +170,7 @@ Three layers, from cheapest to the real thing:
 1. **Unit tests** in `tests/`, run by CI on every push and pull request before anything is built:
    time parsing, the role picker (and its Spoiler Alert lock), the Jellyfin link
    menu and the getting-started guide, `/spoiler` expiry, streaks and achievements against a throwaway database, movie
-   night timing and attendance, movie night ratings and history, new-episode batching, the weekly
+   night timing and attendance, movie night ratings and history, new-episode batching, Seerr requests (statuses, seasons, one DM per request), the weekly
    "new this week" grouping and poster grid, the feed's viewing posts, the admin summary, the command set, and the Discord calls
    against fake objects. `tests/test_recorded_jellyfin.py` runs `/watch` and the new-episode DMs
    against **real Jellyfin responses** in `tests/fixtures/jellyfin/`, recorded from the server
