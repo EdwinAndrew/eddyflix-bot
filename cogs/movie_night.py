@@ -23,6 +23,7 @@ from discord.ext import commands, tasks
 import config
 import ratings
 import screenings
+import links
 import watch_data
 
 TZ = ZoneInfo("America/Toronto")
@@ -341,13 +342,15 @@ class LinkMenu(discord.ui.View):
             return
         await watch_data.set_link(interaction.user.id, name)
         await interaction.response.edit_message(content=linked_message(name), view=None)
+        await links.announce(interaction.client, interaction.user, name, mine, "with the 👤 button")
 
 
 async def offer_link(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True, thinking=True)
     jf = getattr(interaction.client, "jf", None)
     try:
-        names = await jf.get_user_names() if jf else []
+        # Admin and disabled accounts are never offered; the owner links those with /link
+        names = await jf.get_linkable_user_names() if jf else []
     except Exception:
         names = []
     if not names:

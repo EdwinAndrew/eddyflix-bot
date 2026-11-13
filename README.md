@@ -63,6 +63,13 @@ On start the bot creates whatever is missing, and never deletes anything:
     (the first 25; past that, `/link`). Already linked, it says who you are and lets you switch
     to a free user; a user someone else has claimed can only be moved by the owner with
     `/link member:`. The buttons survive restarts
+  - **Who can link to what.** A link steers the bot, not Jellyfin: progress, stats, DMs, and the
+    Seerr user `/request` asks as. So Jellyfin **administrator and disabled accounts are never
+    offered** (in the menu or in `/link`'s list) and `/link` refuses them, and it refuses a user
+    someone else has claimed, the same as the menu. Only the owner can link those. Hidden users
+    are fine (hidden only means left off Jellyfin's sign-in screen). Every new or changed link
+    gets a line in the admin channel ("🔗 @Sarah linked as **Sarah**, with the 👤 button"), so a
+    wrong one gets noticed
 - **A 🎬 Movie Night category**: `#movie-night` (announcements, staff only), `#watch-chat`, and
   a 🎥 Theatre voice channel
 - **`/movienight film day time`**: the film from the library, a day (`tonight`, `friday`,
