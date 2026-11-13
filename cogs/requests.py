@@ -45,6 +45,12 @@ def jellyfin_link(details_or_media: dict) -> str | None:
     return details_link(item_id) if item_id else None
 
 
+# Requests go in as the member's own Seerr user, so they follow that user's approval
+# rules. Made as the API key's user (the admin) they would skip approval.
+NOT_LINKED = ("To request it, link your Jellyfin user first: the 👤 button in #roles or /jf-link. "
+              "Linked already? Sign in to Seerr once so it knows you.")
+
+
 def request_card(media_type: str, details: dict, seerr_name: str | None) -> discord.Embed:
     """The answer to /request. seerr_name is whom a request would be made as."""
     is_tv = media_type == "tv"
@@ -67,8 +73,7 @@ def request_card(media_type: str, details: dict, seerr_name: str | None) -> disc
     genres = ", ".join(g.get("name", "") for g in details.get("genres") or [])
     embed.add_field(name="Genre", value=(genres or "—")[:100], inline=True)
     if mr.can_request(media_type, details):
-        embed.set_footer(text=f"Requests are made as your Seerr user, {seerr_name}." if seerr_name else
-                         "Use /jf-link so a request is made as your Seerr user.")
+        embed.set_footer(text=f"Requests are made as your Seerr user, {seerr_name}." if seerr_name else NOT_LINKED)
     return embed
 
 
@@ -111,7 +116,7 @@ class RequestView(discord.ui.View):
         self.cog, self.owner_id, self.media_type, self.details = cog, owner_id, media_type, details
         self.seerr_id, self.seerr_name = seerr_id, seerr_name
 
-        if mr.can_request(media_type, details):
+        if seerr_id is not None and mr.can_request(media_type, details):
             choices = mr.season_choices(details) if media_type == "tv" else [("Request", None)]
             for text, seasons in choices:
                 self.add_button(text, "➕", discord.ButtonStyle.success, self.requester(seasons))
@@ -188,6 +193,8 @@ class Requests(commands.Cog):
     async def place_request(self, user, media_type: str, details: dict, seasons: list[int] | None,
                             seerr_id: int | None, seerr_name: str | None) -> str:
         title = mr.label(details)
+        if seerr_id is None:
+            return NOT_LINKED
         try:
             request = await self.seerr.create_request(media_type, details["id"], seasons, seerr_id)
         except SeerrError as e:

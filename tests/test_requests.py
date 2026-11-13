@@ -112,12 +112,18 @@ def test_linked_member_requests_as_their_seerr_user(db_path):
     assert "as **kevin**" in text and "waiting for approval" in text
 
 
-def test_unlinked_member_requests_with_the_key_user(db_path):
+def test_unlinked_member_cannot_request(db_path):
+    # As the API key's user (the admin) the request would skip approval
     cog = cog_with([])
     assert asyncio.run(cog.seerr_user(222)) == (None, None)
     text = asyncio.run(cog.place_request(SimpleNamespace(id=222), "movie", FILM, None, None, None))
-    assert cog.seerr.made == [("movie", 353081, None, None)]
-    assert "/jf-link" in text
+    assert cog.seerr.made == []
+    assert text == rq.NOT_LINKED and "/jf-link" in text
+
+
+def test_no_request_buttons_unless_linked():
+    assert rq.RequestView(SimpleNamespace(), 1, "tv", SHOW, None, None).children == []
+    assert rq.request_card("tv", SHOW, None).footer.text == rq.NOT_LINKED
 
 
 def test_linked_but_not_in_seerr_falls_back_to_the_key_user(db_path):
@@ -133,7 +139,7 @@ def test_refusal_is_explained_and_nothing_is_noted(db_path):
         raise rq.SeerrError(409, "Request for this media already exists.")
     seerr.create_request = refuse
     cog = cog_with([], seerr)
-    assert "already asked" in asyncio.run(cog.place_request(SimpleNamespace(id=1), "movie", FILM, None, None, None))
+    assert "already asked" in asyncio.run(cog.place_request(SimpleNamespace(id=1), "movie", FILM, None, 4, "kevin"))
     assert asyncio.run(waiting()) == {}
 
 
@@ -144,7 +150,7 @@ async def waiting():
 
 
 def test_buttons_for_a_new_show():
-    view = rq.RequestView(SimpleNamespace(), 1, "tv", SHOW, None, None)
+    view = rq.RequestView(SimpleNamespace(), 1, "tv", SHOW, 4, "kevin")
     assert [b.label for b in view.children] == ["Request all seasons", "Request season 2 only"]
 
 
@@ -213,7 +219,7 @@ def test_one_dm_when_ready_even_after_a_restart(db_path):
 def test_everyone_waiting_gets_one_dm_and_closed_dms_get_a_mention(db_path):
     asker, follower = FakeUser(111), FakeUser(222, dms_open=False)
     cog = cog_with([asker, follower])
-    asyncio.run(cog.place_request(asker, "movie", FILM, None, None, None))
+    asyncio.run(cog.place_request(asker, "movie", FILM, None, 4, "kevin"))
     asked_for = {**FILM, "mediaInfo": {"status": mr.MEDIA_PENDING, "requests": [{"id": 41, "status": mr.REQUEST_APPROVED}]}}
     asyncio.run(cog.follow(follower, "movie", asked_for))
     asyncio.run(cog.follow(follower, "movie", asked_for))       # twice: still one row
