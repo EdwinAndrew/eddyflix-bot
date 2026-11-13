@@ -514,6 +514,14 @@ async def set_link(discord_user_id: int, jellyfin_user: str):
         await db.commit()
 
 
+async def all_links() -> list[tuple[int, str]]:
+    """Every /jf-link as (Discord id, Jellyfin user name), oldest link first."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("SELECT discord_user_id, jellyfin_user FROM user_links "
+                              "ORDER BY linked_at, discord_user_id") as cur:
+            return [(int(row[0]), row[1]) for row in await cur.fetchall()]
+
+
 async def linked_jellyfin_users() -> set[str]:
     """Jellyfin users some Discord member is linked to, in lower case."""
     async with aiosqlite.connect(config.DB_PATH) as db:
