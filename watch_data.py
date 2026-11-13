@@ -1,6 +1,6 @@
 """The watch-history database: tables, recording plays, streaks and achievements."""
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import aiosqlite
 
@@ -326,6 +326,73 @@ async def record_watch_end(jf, session_id: str, item_id: str):
                 await update_streak(user_name, db)
 
                 await db.commit()
+
+async def close_orphans(jf, live: set[tuple[str, str]], now: datetime | None = None) -> tuple[int, int]:
+    """Close plays whose stop the bot never saw: it was down, or (on the old PC)
+    the machine went to sleep mid-show. Run once at start-up, after the first
+    poll; live is the (session id, item id) pairs Jellyfin lists as playing now,
+    which carry on as they are.
+
+    A play followed by another of the same item in the same session is a
+    duplicate (an old bug opened one every poll) and is deleted. Any other is
+    closed at its best guess: the start plus the item's length, but no later than
+    the same person's next play, or now. When Jellyfin no longer knows the item's
+    length (deleted or replaced since) it is closed with no time, so it adds
+    nothing: the gap to the next play can be days. Returns (closed, deleted)."""
+    now = now or datetime.now()
+    runtimes: dict[str, int | None] = {}
+    closed = deleted = 0
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("""
+            SELECT id, session_id, item_id, user_name, start_time FROM watch_history
+            WHERE end_time IS NULL ORDER BY start_time
+        """) as cursor:
+            rows = await cursor.fetchall()
+        for entry_id, session_id, item_id, user_name, start_time in rows:
+            if (session_id, item_id) in live:
+                continue
+            async with db.execute("""
+                SELECT 1 FROM watch_history
+                WHERE session_id = ? AND item_id = ? AND start_time > ? LIMIT 1
+            """, (session_id, item_id, start_time)) as cursor:
+                if await cursor.fetchone():
+                    await db.execute("DELETE FROM watch_history WHERE id = ?", (entry_id,))
+                    deleted += 1
+                    continue
+
+            start = datetime.fromisoformat(start_time)
+            bounds = [now]
+            async with db.execute("""
+                SELECT MIN(start_time) FROM watch_history WHERE user_name = ? AND start_time > ?
+            """, (user_name, start_time)) as cursor:
+                nxt = (await cursor.fetchone())[0]
+            if nxt:
+                bounds.append(datetime.fromisoformat(nxt))
+            if item_id not in runtimes:
+                try:
+                    ticks = (await jf.get_item(item_id) or {}).get('RunTimeTicks') if jf else None
+                except Exception:
+                    ticks = None
+                runtimes[item_id] = int(ticks // 10_000_000) if ticks else None
+            # No length known: count nothing rather than guess
+            bounds.append(start + timedelta(seconds=runtimes[item_id] or 0))
+            end = max(start, min(bounds))
+            duration = int((end - start).total_seconds())
+            await db.execute("UPDATE watch_history SET end_time = ?, duration_seconds = ? WHERE id = ?",
+                             (end, duration, entry_id))
+            await db.execute("""
+                INSERT INTO popular_content (item_id, item_name, item_type, series_name, total_watch_time, watch_count, last_watched)
+                SELECT item_id, item_name, item_type, series_name, ?, 1, ?
+                FROM watch_history WHERE id = ?
+                ON CONFLICT(item_id) DO UPDATE SET
+                    total_watch_time = total_watch_time + ?,
+                    watch_count = watch_count + 1,
+                    last_watched = MAX(last_watched, ?)
+            """, (duration, end, entry_id, duration, end))
+            closed += 1
+        await db.commit()
+    return closed, deleted
+
 
 async def update_streak(user_name: str, db, today=None):
     """Update user's watch streak and check for milestone achievements.

@@ -115,6 +115,14 @@ class Activity(commands.Cog):
             for session in sessions:
                 await self.record(session)
 
+            if not self.sessions_seeded:
+                # Plays left open while the bot was down: close them once, now
+                # that this poll has picked up the ones still playing
+                live = {(s['Id'], s['NowPlayingItem']['Id']) for s in sessions if s.get('NowPlayingItem')}
+                closed, deleted = await watch_data.close_orphans(self.bot.jf, live, self.now())
+                if closed or deleted:
+                    print(f"Closed {closed} plays left open, deleted {deleted} duplicates")
+
             for sess_id in set(self.active_sessions) - current_session_ids:
                 # Record the end of anything still playing when the session went away
                 prev_session = self.active_sessions.pop(sess_id)
