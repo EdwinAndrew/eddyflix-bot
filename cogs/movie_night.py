@@ -1,4 +1,4 @@
-"""Movie night: themed roles, a role picker and a getting-started guide in #roles,
+"""Movie night: themed roles, a role picker and a getting-started guide in #start-here,
 /movienight and /movievote,
 and following each night through: a reminder, the start, and a recap.
 
@@ -27,13 +27,14 @@ import watch_data
 
 TZ = ZoneInfo("America/Toronto")
 
-ROLES_CHANNEL = "roles"
+ROLES_CHANNEL = "start-here"
+OLD_ROLES_CHANNEL = "roles"     # its name before 2.0.1; still found, so nothing breaks either way
 CATEGORY = "🎬 Movie Night"
 ANNOUNCE_CHANNEL = "movie-night"
 CHAT_CHANNEL = "watch-chat"
 VOICE_CHANNEL = "🎥 Theatre"
 
-TICKET_ROLE = "🎟️ Ticket Holder"   # pinged for movie nights; opt-in from #roles
+TICKET_ROLE = "🎟️ Ticket Holder"   # pinged for movie nights; opt-in from #start-here
 
 # Staff, handed out by the owner, never picked. Both may schedule movie nights.
 # The bot can only grant permissions it holds itself, so no kick, ban or Administrator.
@@ -181,7 +182,7 @@ def parse_when(day: str, at: str, now: datetime | None = None) -> datetime:
     return when
 
 
-# --- the role picker in #roles ---------------------------------------------
+# --- the role picker in #start-here ---------------------------------------------
 
 def picker_embed() -> discord.Embed:
     lines = "\n".join(f"{f.emoji} **{f.label}**: {f.blurb}" for f in FLAIRS)
@@ -285,7 +286,7 @@ async def set_flairs(interaction: discord.Interaction, chosen: list[Flair], lock
         await interaction.response.send_message("Flairs cleared.", ephemeral=True)
 
 
-# --- linking a Jellyfin user from #roles -------------------------------------
+# --- linking a Jellyfin user from #start-here -------------------------------------
 # The same as /link, for people who don't know the command. The button is on
 # the picker, so it survives restarts with it; the menu it answers with is made
 # fresh each time, so it always lists who is still free.
@@ -359,11 +360,11 @@ async def offer_link(interaction: discord.Interaction):
                                     **({"view": LinkMenu(free)} if free else {}))
 
 
-# --- the getting-started guide in #roles -------------------------------------
+# --- the getting-started guide in #start-here -------------------------------------
 
 def guide_embed(owner_id: int | None = None) -> discord.Embed:
     """How to get an account and start watching, then what to do here. Posted in
-    #roles next to the picker and edited in place the same way, so a change to the
+    #start-here next to the picker and edited in place the same way, so a change to the
     text or the addresses shows up after a restart."""
     owner = f"<@{owner_id}>" if owner_id else "the server owner"
     url = config.JELLYFIN_PUBLIC_URL
@@ -402,6 +403,13 @@ def guide_embed(owner_id: int | None = None) -> discord.Embed:
 
 
 # --- creating what is missing ----------------------------------------------
+
+def find_roles_channel(guild):
+    """#start-here, or #roles on a server not renamed yet. None when neither
+    exists: the guide and picker are then left alone, never a new channel."""
+    return (discord.utils.get(guild.text_channels, name=ROLES_CHANNEL)
+            or discord.utils.get(guild.text_channels, name=OLD_ROLES_CHANNEL))
+
 
 async def ensure_structure(bot: discord.Client):
     for guild in bot.guilds:
@@ -463,13 +471,13 @@ async def _ensure_guild(bot: discord.Client, guild: discord.Guild):
         await guild.create_voice_channel(VOICE_CHANNEL, category=category, reason=why)
         print(f"Created {VOICE_CHANNEL}")
 
-    roles_channel = discord.utils.get(guild.text_channels, name=ROLES_CHANNEL)
+    roles_channel = find_roles_channel(guild)
     if roles_channel is None:
         return
     if roles_channel.overwrites_for(everyone).send_messages is not False:
         await roles_channel.edit(overwrites={**roles_channel.overwrites, **read_only}, reason=why)
     # The guide and the picker: one message each, found by title and edited in
-    # place, so a change here shows up after a restart. A new #roles gets the
+    # place, so a change here shows up after a restart. A new #start-here gets the
     # guide first, so it reads top down; an older one gets it under the picker.
     found = {}
     async for message in roles_channel.history(limit=50):
@@ -482,13 +490,13 @@ async def _ensure_guild(bot: discord.Client, guild: discord.Guild):
             await found[title].edit(**content)
         else:
             await roles_channel.send(**content)
-            print(f"Posted {what} in #{ROLES_CHANNEL}")
+            print(f"Posted {what} in #{roles_channel.name}")
 
 
 # --- slash commands --------------------------------------------------------
 
 class MovieNight(commands.Cog):
-    """/movienight and /movievote, and the loop that follows each night. The #roles
+    """/movienight and /movievote, and the loop that follows each night. The #start-here
     picker is re-attached in the bot's setup_hook, and the roles and channels are
     created from on_ready."""
 

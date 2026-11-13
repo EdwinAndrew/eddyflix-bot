@@ -11,7 +11,7 @@ all. Two people's positions differ by the number of episodes between them.
 
 MAX_OTHERS = 10        # other linked members looked up per command, to keep Jellyfin calls bounded
 
-LINK_HOW = "`/link` or the 👤 button in #roles"
+LINK_HOW = "`/link` or the 👤 button in #start-here"
 
 
 # --- who else is linked -----------------------------------------------------------

@@ -1,7 +1,7 @@
 """/spoiler and /unspoiler: staff hand out the 🙊 Spoiler Alert flair for a while (#15).
 
 The expiry is kept in the database and a loop takes the role off once it has run
-out, so a restart does not lose it. While it runs, the #roles picker keeps it on
+out, so a restart does not lose it. While it runs, the #start-here picker keeps it on
 (see set_flairs in movie_night.py).
 """
 import time
@@ -147,7 +147,7 @@ class Spoiler(commands.Cog):
         await self.take_off(guild, member.id, current["had_role"], f"/unspoiler by {interaction.user}")
         line = f"{SPOILER_FLAIR.emoji} {member.mention} is forgiven: {interaction.user.mention} lifted their spoiler time early."
         posted = await self.post(guild, line, member)
-        kept = "\nThey picked the flair themselves before, so it stays on until they drop it in #roles." if current["had_role"] else ""
+        kept = "\nThey picked the flair themselves before, so it stays on until they drop it in #start-here." if current["had_role"] else ""
         await interaction.followup.send((line if posted else f"{line}\n(Couldn't post it in #{CHAT_CHANNEL}.)") + kept,
                                         ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 

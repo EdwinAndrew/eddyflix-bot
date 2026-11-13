@@ -68,7 +68,7 @@ def test_not_linked_messages():
     mine = household.not_linked(False, "Sarah", True)
     assert "link your Jellyfin user first" in mine and "/link" in mine and "👤" in mine
     theirs = household.not_linked(True, "Sarah", False)
-    assert theirs.startswith("Sarah isn't linked") and "/link" in theirs and "#roles" in theirs
+    assert theirs.startswith("Sarah isn't linked") and "/link" in theirs and "#start-here" in theirs
     both = household.not_linked(False, "Sarah", False)
     assert "you both need to be linked" in both and "ask Sarah" in both
 

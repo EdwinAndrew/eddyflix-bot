@@ -1,4 +1,4 @@
-"""#roles for newcomers: the Jellyfin link menu and the getting-started guide."""
+"""#start-here for newcomers: the Jellyfin link menu and the getting-started guide."""
 from cogs import movie_night as mn
 import config
 

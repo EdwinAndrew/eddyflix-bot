@@ -47,7 +47,7 @@ def jellyfin_link(details_or_media: dict) -> str | None:
 
 # Requests go in as the member's own Seerr user, so they follow that user's approval
 # rules. Made as the API key's user (the admin) they would skip approval.
-NOT_LINKED = ("To request it, link your Jellyfin user first: the 👤 button in #roles or /link. "
+NOT_LINKED = ("To request it, link your Jellyfin user first: the 👤 button in #start-here or /link. "
               "Linked already? Sign in to Seerr once so it knows you.")
 
 

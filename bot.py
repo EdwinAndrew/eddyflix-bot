@@ -48,7 +48,7 @@ class EddyFlixBot(commands.Bot):
     async def setup_hook(self):
         for extension in EXTENSIONS:
             await self.load_extension(extension)
-        # Re-attach the #roles picker's buttons (flairs, ticket, Jellyfin link), which outlive the process.
+        # Re-attach the #start-here picker's buttons (flairs, ticket, Jellyfin link), which outlive the process.
         self.add_view(movie_night.RolePicker())
         # And the 1-5 🍿 rating buttons on movie night recaps, by event id
         self.add_dynamic_items(ratings.RateButton)
@@ -73,7 +73,7 @@ class EddyFlixBot(commands.Bot):
         except Exception as e:
             print(f'Failed to sync commands: {e}')
 
-        # Movie night roles, channels and the #roles picker: created if missing
+        # Movie night roles, channels and the #start-here picker: created if missing
         try:
             await movie_night.ensure_structure(self)
         except Exception as e:

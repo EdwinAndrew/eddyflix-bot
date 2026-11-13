@@ -47,7 +47,7 @@ class Help(commands.Cog):
         embed.add_field(
             name="🏆 You and the server",
             value=(
-                "`/link <jellyfin user>` - Connect your Discord to your Jellyfin user (or the 👤 button in #roles)\n"
+                "`/link <jellyfin user>` - Connect your Discord to your Jellyfin user (or the 👤 button in #start-here)\n"
                 "`/achievements [user]` - Watch time, streak, movie nights and finished series\n"
                 "`/streaks [user]` - Your watch streak\n"
                 "`/stats [view]` - Server status, recently added, most watched, a watch time chart, "
