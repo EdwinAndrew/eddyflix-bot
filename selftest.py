@@ -19,7 +19,7 @@ from cogs.movie_night import film_label
 from cogs.watch import clock, episode_label
 
 TABLES = ("watch_history", "user_links", "subscriptions", "movie_nights",
-          "movie_night_attendance", "bot_state", "known_episodes")
+          "movie_night_attendance", "bot_state", "known_episodes", "subscription_offers")
 
 
 @dataclass

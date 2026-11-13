@@ -11,8 +11,11 @@ things are kept in the database between polls:
   numbers, so it is not announced again
 
 Everything here except the last few database helpers is pure, for the tests.
+Subscribing itself is here too, shared by /subscribe and the 🔔 button the
+bot offers when someone catches up on a show (catch_up.py).
 """
 import re
+import sqlite3
 import unicodedata
 from datetime import datetime, timedelta, timezone
 
@@ -168,3 +171,26 @@ async def known_keys(db) -> set[str]:
 async def add_known(db, episodes: list[dict]) -> None:
     await db.executemany("INSERT OR IGNORE INTO known_episodes (episode_key) VALUES (?)",
                          [(episode_key(e),) for e in episodes])
+
+
+async def subscribed(db, user_id: str, series_id: str | None, series_name: str | None) -> bool:
+    """Whether this Discord member gets new-episode DMs for this show already."""
+    async with db.execute("SELECT id, discord_user_id, show_name, show_id FROM subscriptions "
+                          "WHERE discord_user_id = ?", (user_id,)) as cursor:
+        return bool(subscribers(await cursor.fetchall(), series_id, series_name))
+
+
+async def subscribe(db, user_id: str, username: str, series_name: str, series_id: str | None) -> bool:
+    """Subscribe a member to a show, for /subscribe and the 🔔 offer button.
+    True if they were not subscribed before, False if they were. Commits."""
+    if await subscribed(db, user_id, series_id, series_name):
+        return False
+    try:
+        await db.execute("""
+            INSERT INTO subscriptions (discord_user_id, discord_username, show_name, show_id)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, username, series_name, series_id))
+        await db.commit()
+    except sqlite3.IntegrityError:
+        return False
+    return True

@@ -182,6 +182,18 @@ class JellyfinClient:
         result = await self._get(endpoint)
         return result.get('Items', []) if isinstance(result, dict) else []
 
+    async def newest_episodes(self, series_id: str, limit: int | None = 10) -> List[dict]:
+        """A series' episodes, highest season and number first, for the catch-up
+        offer (catch_up.py). limit=None lists them all."""
+        # ParentId, not SeriesId: Jellyfin 12 ignores SeriesId on /Items.
+        endpoint = (f"/Items?ParentId={series_id}&IncludeItemTypes=Episode&Recursive=true&IsMissing=false"
+                    f"&SortBy=ParentIndexNumber,IndexNumber&SortOrder=Descending"
+                    f"&EnableImages=false&EnableUserData=false")
+        if limit:
+            endpoint += f"&Limit={limit}"
+        result = await self._get(endpoint)
+        return result.get('Items', []) if isinstance(result, dict) else []
+
     async def resume_items(self, user_id: str, limit: int = 5) -> List[dict]:
         """What this user stopped part-way through, most recent first."""
         result = await self._get(f"/UserItems/Resume?userId={user_id}&Limit={limit}")
