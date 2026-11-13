@@ -1,15 +1,13 @@
 """The weekly "New on EddyFlix" post: Sundays just after the digest, in the same
-channel, or now with /jf-weekly-new (owner only). Skipped on a week with nothing new."""
+channel, or now with /admin weekly-new (owner only). Skipped on a week with nothing new."""
 import io
 from datetime import datetime, time, timezone
 
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
 import new_this_week as nw
-from checks import owner_only
 from cogs.digest import DIGEST_TIME
 from cogs.movie_night import TZ, details_link
 
@@ -80,9 +78,8 @@ class WeeklyNew(commands.Cog):
             except Exception as e:
                 print(f"New on EddyFlix: {e}")
 
-    @app_commands.command(name="jf-weekly-new", description="(Owner) Post the weekly New on EddyFlix list now")
-    @owner_only()
-    async def weekly_new_command(self, interaction: discord.Interaction):
+    async def post_now(self, interaction: discord.Interaction):
+        """/admin weekly-new"""
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             message = await self.post()

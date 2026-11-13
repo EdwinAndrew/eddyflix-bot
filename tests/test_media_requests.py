@@ -170,10 +170,10 @@ def test_seerr_user_matches_the_jellyfin_name():
 def test_placed_message():
     approved = mr.placed_message({"status": mr.REQUEST_APPROVED}, "Up (2009)", None, "Kevin")
     assert approved.startswith("✅ Requested **Up (2009)** as **Kevin**. It's approved and on its way.")
-    assert "/jf-link" not in approved
+    assert "/link" not in approved
     pending = mr.placed_message({"status": mr.REQUEST_PENDING}, "Fallout (2024)", [2], None)
     assert pending.startswith("✅ Requested season 2 of **Fallout (2024)**. It's waiting for approval.")
-    assert "/jf-link" in pending
+    assert "/link" in pending
 
 
 def test_refusals():

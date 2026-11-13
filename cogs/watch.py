@@ -2,7 +2,7 @@
 
 /watch finds a film or show by name, /pick picks one at random (with a reroll),
 and /continue lists what you were in the middle of. Every answer is ephemeral, so
-only the person asking sees it. For someone linked with /jf-link the card also
+only the person asking sees it. For someone linked with /link the card also
 says where they left off.
 """
 import asyncio
@@ -128,7 +128,7 @@ def watch_card(item: dict, progress: str | None) -> discord.Embed:
     if progress is not None:
         embed.add_field(name="Where you left off", value=progress, inline=False)
     else:
-        embed.set_footer(text="Use /jf-link to see where you left off.")
+        embed.set_footer(text="Use /link to see where you left off.")
     return embed
 
 
@@ -181,10 +181,10 @@ def genres_matching(genres: list[str], current: str) -> list[str]:
 
 
 def pool_footer(count: int, types: str, unwatched: bool, linked: bool) -> str:
-    """'Picked from 77 unwatched films', and a /jf-link hint for someone not linked."""
+    """'Picked from 77 unwatched films', and a /link hint for someone not linked."""
     nouns = {"Movie": ("film", "films"), "Series": ("show", "shows")}.get(types, ("title", "films and shows"))
     text = f"Picked from {count} {'unwatched ' if unwatched else ''}{nouns[0] if count == 1 else nouns[1]}"
-    return text + ("" if linked else ". Use /jf-link to see where you left off.")
+    return text + ("" if linked else ". Use /link to see where you left off.")
 
 
 def draw(queue: list[dict], pool: list[dict], current_id: str | None) -> dict:
@@ -399,7 +399,7 @@ class Watch(commands.Cog):
         kind="A film or a show (either, if left out)",
         genre="A genre from the library",
         max_length="How long it can be. For a show, the length of an episode",
-        include_watched="Also pick what you've already seen (once you've used /jf-link)",
+        include_watched="Also pick what you've already seen (once you've used /link)",
     )
     @app_commands.choices(
         kind=[app_commands.Choice(name="Film", value="film"), app_commands.Choice(name="Show", value="show")],
@@ -449,7 +449,7 @@ class Watch(commands.Cog):
         user_id = await self.jellyfin_user(interaction.user.id)
         if not user_id:
             await interaction.followup.send(
-                "Link your Jellyfin user with `/jf-link` first, then `/continue` shows what you were in the middle of.",
+                "Link your Jellyfin user with `/link` first, then `/continue` shows what you were in the middle of.",
                 ephemeral=True)
             return
         # More than we list: seasons, finished episodes and repeats of a show drop out

@@ -19,7 +19,7 @@ def test_link_prompt():
     assert "Ask the server owner" in mn.link_prompt("eddy", [], False)
     assert mn.link_prompt(None, ["bob"], False).startswith("Which Jellyfin user are you?")
     assert "linked to someone already" in mn.link_prompt(None, [], False)
-    assert "/jf-link" in mn.link_prompt(None, ["bob"], True)
+    assert "/link" in mn.link_prompt(None, ["bob"], True)
 
 
 def guide_text(embed):
@@ -36,7 +36,7 @@ def test_guide_with_both_addresses(monkeypatch):
     assert "https://eddyflix.duckdns.org:8443" in text and "port and all" in text
     assert "Seerr: **https://eddyflix.duckdns.org:5056**" in text
     assert "Jellyfin and Seerr only answer from Canada" in text
-    for word in ("LG TV", "webOS", "iPhone", "Browser", mn.LINK_LABEL, "/watch", "/jf-subscribe", "/jf-achievements"):
+    for word in ("LG TV", "webOS", "iPhone", "Browser", mn.LINK_LABEL, "/watch", "/subscribe", "/achievements"):
         assert word in text, word
     assert all(len(f.value) <= 1024 for f in embed.fields) and len(embed) <= 6000
 

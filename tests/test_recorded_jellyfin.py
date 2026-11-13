@@ -61,7 +61,7 @@ def test_show_for_someone_not_linked():
     assert "RecursiveItemCount" not in rec["item"] and "ChildCount" not in rec["item"]
     embed = watch_card({**rec["item"], "RecursiveItemCount": rec["episode_count"]}, None)
     assert fields(embed)["Show"] == "54 episodes · ~23m each"
-    assert "/jf-link" in embed.footer.text
+    assert "/link" in embed.footer.text
 
 
 def test_a_season_import_is_one_message_per_show():

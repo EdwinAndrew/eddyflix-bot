@@ -68,5 +68,5 @@ def recap_embed(title: str, attended: list[tuple[int, int]], dropped: list[int])
     if dropped:
         embed.add_field(name="Dropped by", value=" ".join(f"<@{uid}>" for uid in dropped[:30]), inline=False)
     embed.set_footer(text=f"{ATTEND_MINUTES} minutes in the Theatre counts as attending. "
-                          "The tally is on /jf-achievements")
+                          "The tally is on /achievements")
     return embed

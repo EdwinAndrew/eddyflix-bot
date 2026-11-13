@@ -82,7 +82,7 @@ def test_footer():
     assert pool_footer(77, "Movie", True, True) == "Picked from 77 unwatched films"
     assert pool_footer(1, "Series", False, True) == "Picked from 1 show"
     assert pool_footer(138, "Movie,Series", False, False) == \
-        "Picked from 138 films and shows. Use /jf-link to see where you left off."
+        "Picked from 138 films and shows. Use /link to see where you left off."
 
 
 def test_rerolls_do_not_repeat_until_the_pool_runs_out():

@@ -294,7 +294,7 @@ def placed_message(request: dict, title: str, seasons: list[int] | None, as_user
         state = "It's waiting for approval."
     text = f"✅ Requested {what}{who}. {state} I'll DM you when it's ready to watch."
     if not as_user:
-        text += "\n-# Made with the server's Seerr account. Use /jf-link so requests are made as you."
+        text += "\n-# Made with the server's Seerr account. Use /link so requests are made as you."
     return text
 
 

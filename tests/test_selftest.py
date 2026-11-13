@@ -1,5 +1,5 @@
 """The self-test: the live checks against a fake Jellyfin, and the Discord checks
-against fake Discord objects. The real thing runs with selftest.py and /jf-selftest."""
+against fake Discord objects. The real thing runs with selftest.py and /admin selftest."""
 import asyncio
 import sqlite3
 from datetime import datetime, timezone

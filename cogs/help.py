@@ -1,4 +1,4 @@
-"""/jf-help."""
+"""/help."""
 from datetime import datetime
 
 import discord
@@ -12,87 +12,50 @@ class Help(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="jf-help", description="Show all available Jellyfin bot commands")
+    @app_commands.command(name="help", description="What the EddyFlix bot can do")
     async def help_command(self, interaction: discord.Interaction):
         """Display help information with all available commands"""
         embed = discord.Embed(
-            title="🤖 Jellyfin Discord Bot - Commands",
-            description="Here are all available commands for the Jellyfin bot:",
+            title="🤖 EddyFlix Bot - Commands",
+            description="Here's what the bot can do. Staff and owner commands only show up for them.",
             color=discord.Color.purple(),
             timestamp=datetime.now()
         )
 
-        # Server Status Commands
         embed.add_field(
-            name="📊 Server Status",
-            value=(
-                "`/jf-status` - Show detailed server status with active streams\n"
-                "`/jf-stats` - Show server statistics and library info\n"
-                "`/jf-health` - Check server health and resource usage"
-            ),
-            inline=False
-        )
-
-        # Content Commands
-        embed.add_field(
-            name="🎬 Content Discovery",
+            name="🎬 Find something to watch",
             value=(
                 "`/watch <title>` - Find a film or show, get a link and where you left off\n"
                 "`/pick [type] [genre] [max_length]` - Something to watch at random, with a reroll\n"
                 "`/continue` - What you were in the middle of\n"
-                "`/request <title>` - Ask for a film or show to be added; DMs you when it's ready\n"
-                "`/jf-recent` - Show recently added content\n"
-                "`/jf-popular [limit]` - Show most popular content by watch time"
-            ),
-            inline=False
-        )
-
-        # Analytics Commands
-        embed.add_field(
-            name="📈 Analytics",
-            value=(
-                "`/jf-stats-graph [days]` - Show watch time charts (default: 7 days)\n"
-                "`/jf-weekly-digest` - (Owner) Post the weekly digest now\n"
-                "`/jf-weekly-new` - (Owner) Post the New on EddyFlix list now"
+                "`/request <title>` - Ask for a film or show to be added; DMs you when it's ready"
             ),
             inline=False
         )
 
         embed.add_field(
-            name="🍿 Movie Night",
+            name="🔔 New-episode DMs",
             value=(
-                "`/movienight <film> <day> <time>` - Schedule a movie night\n"
-                "`/movievote` - Post a poll of films for the next one\n"
-                "`/movienight-history` - Past nights, who came and how they were rated"
+                "`/subscribe <show>` - Get a DM when new episodes of a show are added\n"
+                "`/unsubscribe <show>` - Stop those DMs for a show\n"
+                "`/subscriptions` - List the shows you're subscribed to"
             ),
             inline=False
         )
 
-        # Subscription Commands
         embed.add_field(
-            name="🔔 Subscriptions",
+            name="🏆 You and the server",
             value=(
-                "`/jf-subscribe <show>` - Get a DM when new episodes of a show are added\n"
-                "`/jf-unsubscribe <show>` - Stop those DMs for a show\n"
-                "`/jf-subscriptions` - List the shows you're subscribed to"
+                "`/link <jellyfin user>` - Connect your Discord to your Jellyfin user (or the 👤 button in #roles)\n"
+                "`/achievements [user]` - Watch time, streak, movie nights and finished series\n"
+                "`/streaks [user]` - Your watch streak\n"
+                "`/stats [view]` - Server status, recently added, most watched, a watch time chart, "
+                "or the streak leaderboard\n"
+                "`/movienight-history` - Past movie nights, who came and how they were rated"
             ),
             inline=False
         )
 
-        # Achievements & Streaks
-        embed.add_field(
-            name="🏆 Achievements & Streaks",
-            value=(
-                "`/jf-achievements [user]` - Watch time, streak, movie nights and finished series\n"
-                "`/jf-link <jellyfin user>` - Connect your Discord to your Jellyfin user (or the 👤 button in #roles)\n"
-                "`/jf-achievements-all [limit]` - (Owner) List recent achievements\n"
-                "`/jf-streaks [user]` - Show your watch streak\n"
-                "`/jf-streaks-leaderboard [limit]` - View streak leaderboard"
-            ),
-            inline=False
-        )
-
-        # Movie night
         embed.add_field(
             name="🍿 Movie Night (Directors and Ushers)",
             value=(
@@ -104,14 +67,9 @@ class Help(commands.Cog):
             inline=False
         )
 
-        # Debug Commands
         embed.add_field(
             name="🔧 Owner only",
-            value=(
-                "`/jf-debug-sessions [limit]` - Show unclosed watch sessions\n"
-                "`/jf-selftest` - Check the bot end to end, Discord included\n"
-                "`/jf-admin-summary` - Post the weekly admin summary now"
-            ),
+            value="`/admin` - Post the weekly digest, New on EddyFlix or admin summary now; self-test, health and diagnostics",
             inline=False
         )
 

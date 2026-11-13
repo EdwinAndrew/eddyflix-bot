@@ -286,7 +286,7 @@ class JellyfinClient:
         return None
 
     async def get_user_names(self) -> List[str]:
-        """Jellyfin's user names, for /jf-link."""
+        """Jellyfin's user names, for /link."""
         result = await self._get("/Users")
         return sorted((u.get('Name') for u in result if u.get('Name')), key=str.lower) if isinstance(result, list) else []
 

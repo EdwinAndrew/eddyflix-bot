@@ -115,7 +115,7 @@ async def init_database():
             if 'item_total' not in [c[1] for c in await cursor.fetchall()]:
                 await db.execute("ALTER TABLE achievements ADD COLUMN item_total INTEGER")
 
-        # Which Jellyfin user a Discord member is, set with /jf-link
+        # Which Jellyfin user a Discord member is, set with /link
         await db.execute("""
             CREATE TABLE IF NOT EXISTS user_links (
                 discord_user_id TEXT PRIMARY KEY,

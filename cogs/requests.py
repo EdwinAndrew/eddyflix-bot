@@ -3,7 +3,7 @@
 The answer is ephemeral: poster, overview, and whether the title is in the
 library, requested, or can be requested, with a button to ask for it (for a
 show, all missing seasons or the latest one). Requests are made as the caller's
-Seerr user when /jf-link names one, else with the API key's account.
+Seerr user when /link names one, else with the API key's account.
 
 Every five minutes the bot asks Seerr about the requests made from Discord that
 are still waiting (see media_requests.py) and DMs whoever asked once one can be
@@ -47,7 +47,7 @@ def jellyfin_link(details_or_media: dict) -> str | None:
 
 # Requests go in as the member's own Seerr user, so they follow that user's approval
 # rules. Made as the API key's user (the admin) they would skip approval.
-NOT_LINKED = ("To request it, link your Jellyfin user first: the 👤 button in #roles or /jf-link. "
+NOT_LINKED = ("To request it, link your Jellyfin user first: the 👤 button in #roles or /link. "
               "Linked already? Sign in to Seerr once so it knows you.")
 
 
@@ -178,7 +178,7 @@ class Requests(commands.Cog):
     # --- making requests -----------------------------------------------------
 
     async def seerr_user(self, discord_user_id: int) -> tuple[int | None, str | None]:
-        """(Seerr user id, name) for a member linked with /jf-link, or (None, None)."""
+        """(Seerr user id, name) for a member linked with /link, or (None, None)."""
         name = await watch_data.get_link(discord_user_id)
         if not name:
             return None, None

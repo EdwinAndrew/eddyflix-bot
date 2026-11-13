@@ -1,4 +1,4 @@
-"""Finding newly added episodes and grouping them for /jf-subscribe notifications.
+"""Finding newly added episodes and grouping them for /subscribe notifications.
 
 The subscriptions cog polls Jellyfin for episodes sorted newest first. Two
 things are kept in the database between polls:

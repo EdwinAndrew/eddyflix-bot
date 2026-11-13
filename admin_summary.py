@@ -2,7 +2,7 @@
 
 For the server owner, in ADMIN_CHANNEL_ID: how much is transcoded and why, by
 device; what was added to the library; who watched and who has not used
-/jf-link; how the bot and Jellyfin are doing. All of it comes from the bot's own
+/link; how the bot and Jellyfin are doing. All of it comes from the bot's own
 database and Jellyfin. Sonarr, Radarr and Seerr need API keys the bot does not
 have yet; each would be one more section (see Admin.sections in cogs/admin.py).
 
@@ -170,8 +170,8 @@ def people_section(plays: list[dict], jellyfin_users: list[str] | None, linked: 
     else:
         linked_lower = {u.lower() for u in linked}
         unlinked = [u for u in jellyfin_users if u.lower() not in linked_lower]
-        lines.append(f"**Not linked with /jf-link ({len(unlinked)}):** {names(unlinked)}" if unlinked
-                     else "**Not linked with /jf-link:** nobody")
+        lines.append(f"**Not linked with /link ({len(unlinked)}):** {names(unlinked)}" if unlinked
+                     else "**Not linked with /link:** nobody")
     return clip("\n".join(lines))
 
 
@@ -230,7 +230,7 @@ def health_section(health: dict, now: datetime) -> str:
         warn = " ⚠️" if total and free / total < LOW_DISK else ""
         lines.append(f"Disk ({label}): {size(free)} free of {size(total)}{warn}")
     if health.get('open_plays'):
-        lines.append(f"{health['open_plays']} plays never closed in the database (/jf-debug-sessions)")
+        lines.append(f"{health['open_plays']} plays never closed in the database (/admin sessions)")
     return clip("\n".join(lines))
 
 

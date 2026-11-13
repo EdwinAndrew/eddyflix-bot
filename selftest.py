@@ -5,7 +5,7 @@ Run after every deploy, inside the container:
 
     docker exec jellyfin-discord-bot python selftest.py
 
-It prints one line per check and exits 1 if any failed. /jf-selftest runs the
+It prints one line per check and exits 1 if any failed. /admin selftest runs the
 same checks, then the ones that need Discord (cogs/selftest.py).
 """
 import asyncio

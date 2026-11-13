@@ -1,4 +1,4 @@
-"""/jf-subscribe, /jf-unsubscribe, /jf-subscriptions, and the DMs they lead to.
+"""/subscribe, /unsubscribe, /subscriptions, and the DMs they lead to.
 
 Every five minutes the bot looks for episodes added to Jellyfin since its last
 look (see new_episodes.py) and DMs each subscriber once per show: "6 new
@@ -49,7 +49,7 @@ def notification_embed(episodes: list[dict]) -> discord.Embed:
         colour=COLOUR,
         timestamp=datetime.now(timezone.utc),
     )
-    embed.set_footer(text="You subscribed with /jf-subscribe · /jf-unsubscribe to stop")
+    embed.set_footer(text="You subscribed with /subscribe · /unsubscribe to stop")
     return embed
 
 
@@ -183,7 +183,7 @@ class Subscriptions(commands.Cog):
         """, (user_id,)) as cursor:
             return await cursor.fetchall()
 
-    @app_commands.command(name="jf-subscribe", description="Get a DM when new episodes of a show are added")
+    @app_commands.command(name="subscribe", description="Get a DM when new episodes of a show are added")
     @app_commands.describe(show="A show from the Jellyfin library")
     async def subscribe_command(self, interaction: discord.Interaction, show: str):
         await interaction.response.defer(ephemeral=True)
@@ -242,7 +242,7 @@ class Subscriptions(commands.Cog):
             return []
         return [app_commands.Choice(name=film_label(i)[:100], value=i["Id"]) for i in items]
 
-    @app_commands.command(name="jf-unsubscribe", description="Stop new-episode DMs for a show")
+    @app_commands.command(name="unsubscribe", description="Stop new-episode DMs for a show")
     @app_commands.describe(show="One of your subscriptions")
     async def unsubscribe_command(self, interaction: discord.Interaction, show: str):
         await interaction.response.defer(ephemeral=True)
@@ -279,7 +279,7 @@ class Subscriptions(commands.Cog):
         return [app_commands.Choice(name=r[2][:100], value=r[2][:100])
                 for r in rows if current.lower() in r[2].lower()][:25]
 
-    @app_commands.command(name="jf-subscriptions", description="List the shows you get new-episode DMs for")
+    @app_commands.command(name="subscriptions", description="List the shows you get new-episode DMs for")
     async def subscriptions_command(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
@@ -291,7 +291,7 @@ class Subscriptions(commands.Cog):
 
         if not rows:
             await interaction.followup.send("You don't have any show subscriptions yet.\n\n"
-                                            "Use `/jf-subscribe` to get a DM when a show gets new episodes.",
+                                            "Use `/subscribe` to get a DM when a show gets new episodes.",
                                             ephemeral=True)
             return
 
@@ -307,7 +307,7 @@ class Subscriptions(commands.Cog):
             except (ValueError, TypeError):
                 date_str = "Unknown"
             embed.add_field(name=f"📺 {show_name}", value=f"Subscribed: {date_str}", inline=True)
-        embed.set_footer(text="Use /jf-unsubscribe to remove a subscription")
+        embed.set_footer(text="Use /unsubscribe to remove a subscription")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 

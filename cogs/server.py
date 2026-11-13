@@ -1,5 +1,6 @@
-"""Server and library commands: /jf-health, /jf-stats, /jf-status, /jf-recent,
-/jf-stats-graph and /jf-popular."""
+"""/stats, one command with a view for each: server status and streams, recently added,
+most watched, a watch time chart and the streak leaderboard. Also the owner's health
+check, run by /admin health (cogs/admin.py)."""
 import io
 import shutil
 from datetime import datetime, timedelta
@@ -19,8 +20,7 @@ class Server(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="jf-health", description="Show server health and resource usage")
-    async def health_command(self, interaction: discord.Interaction):
+    async def health(self, interaction: discord.Interaction):
         """Slash command to check server health"""
         await interaction.response.defer()
 
@@ -106,38 +106,33 @@ class Server(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}")
 
-    @app_commands.command(name="jf-stats", description="Show Jellyfin server statistics")
-    async def stats_command(self, interaction: discord.Interaction):
-        """Slash command to get server stats"""
+    @app_commands.command(name="stats", description="Server status, what's new, what's popular, watch time and streaks")
+    @app_commands.describe(view="What to show (default: server status and streams)",
+                           days="Watch time chart: how many days back (default 7)",
+                           limit="Most watched and streaks: how many to list (default 10)")
+    @app_commands.choices(view=[
+        app_commands.Choice(name="Server status and streams", value="status"),
+        app_commands.Choice(name="Recently added", value="recent"),
+        app_commands.Choice(name="Most watched", value="popular"),
+        app_commands.Choice(name="Watch time chart", value="chart"),
+        app_commands.Choice(name="Streak leaderboard", value="streaks"),
+    ])
+    async def stats_command(self, interaction: discord.Interaction, view: str = "status",
+                            days: int = 7, limit: int = 10):
         await interaction.response.defer()
+        if view == "recent":
+            await self.recent(interaction)
+        elif view == "popular":
+            await self.popular(interaction, limit)
+        elif view == "chart":
+            await self.chart(interaction, days)
+        elif view == "streaks":
+            await self.streaks(interaction, limit)
+        else:
+            await self.status(interaction)
 
-        try:
-            server_info = await self.bot.jf.get_server_info()
-            sessions = await self.bot.jf.get_sessions()
-            library_stats = await self.bot.jf.get_library_stats()
-
-            embed = discord.Embed(
-                title="📊 Server Statistics",
-                color=discord.Color.blue()
-            )
-
-            embed.add_field(name="Server", value=server_info.get('ServerName', 'Jellyfin'), inline=True)
-            embed.add_field(name="Version", value=server_info.get('Version', 'Unknown'), inline=True)
-            embed.add_field(name="Active Sessions", value=len(sessions), inline=True)
-
-            if library_stats:
-                for lib in library_stats:
-                    embed.add_field(name=f"📁 {lib['name']}", value=f"{lib['count']} items", inline=True)
-
-            await interaction.followup.send(embed=embed)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error: {e}")
-
-    @app_commands.command(name="jf-status", description="Show detailed Jellyfin server status with active streams")
-    async def status_command(self, interaction: discord.Interaction):
-        """Slash command to get comprehensive server status"""
-        await interaction.response.defer()
-
+    async def status(self, interaction: discord.Interaction):
+        """Server, uptime, libraries, and every active stream"""
         try:
             server_info = await self.bot.jf.get_server_info()
             sessions = await self.bot.jf.get_sessions()
@@ -254,11 +249,8 @@ class Server(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}")
 
-    @app_commands.command(name="jf-recent", description="Show recently added content")
-    async def recent_command(self, interaction: discord.Interaction):
-        """Slash command to show recently added items"""
-        await interaction.response.defer()
-
+    async def recent(self, interaction: discord.Interaction):
+        """The last ten items added"""
         try:
             items = await self.bot.jf.get_recently_added(limit=10)
 
@@ -321,11 +313,8 @@ class Server(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}")
 
-    @app_commands.command(name="jf-stats-graph", description="Show watch time statistics with charts")
-    async def stats_graph_command(self, interaction: discord.Interaction, days: int = 7):
-        """Generate watch time charts"""
-        await interaction.response.defer()
-
+    async def chart(self, interaction: discord.Interaction, days: int):
+        """Watch time per day, as a bar chart"""
         try:
             async with aiosqlite.connect(config.DB_PATH) as db:
                 # Get watch history for the last N days
@@ -394,11 +383,8 @@ class Server(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error generating stats: {e}")
 
-    @app_commands.command(name="jf-popular", description="Show most popular content based on watch time")
-    async def popular_command(self, interaction: discord.Interaction, limit: int = 10):
+    async def popular(self, interaction: discord.Interaction, limit: int):
         """Show most watched content - aggregates TV shows by series"""
-        await interaction.response.defer()
-
         try:
             async with aiosqlite.connect(config.DB_PATH) as db:
                 # Get aggregated watch data - groups episodes by series name
@@ -447,6 +433,40 @@ class Server(commands.Cog):
                 )
 
             embed.set_footer(text="Jellyfin MediaServer")
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error: {e}")
+
+    async def streaks(self, interaction: discord.Interaction, limit: int):
+        """Show streak leaderboard"""
+        try:
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                async with db.execute("""
+                    SELECT user_name, current_streak, longest_streak, last_watch_date
+                    FROM streaks
+                    ORDER BY current_streak DESC
+                    LIMIT ?
+                """, (limit,)) as cursor:
+                    rows = await cursor.fetchall()
+
+            if not rows:
+                await interaction.followup.send("No streaks found yet.")
+                return
+
+            embed = discord.Embed(
+                title="🔥 Watch Streak Leaderboard",
+                color=discord.Color.orange(),
+                timestamp=datetime.now()
+            )
+
+            for i, (user, current, longest, last) in enumerate(rows, 1):
+                embed.add_field(
+                    name=f"{i}. {user}",
+                    value=f"Current: **{current}** days | Longest: **{longest}** days\nLast: {last}",
+                    inline=False
+                )
+
             await interaction.followup.send(embed=embed)
 
         except Exception as e:

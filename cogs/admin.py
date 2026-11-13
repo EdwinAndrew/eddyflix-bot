@@ -1,5 +1,10 @@
-"""The weekly admin summary in ADMIN_CHANNEL_ID: Sundays at 6 PM, or now with
-/jf-admin-summary (owner only). What goes in it is in admin_summary.py."""
+"""The owner's /admin commands, and the weekly admin summary in ADMIN_CHANNEL_ID:
+Sundays at 6 PM, or now with /admin summary. What goes in the summary is in
+admin_summary.py.
+
+The group has default_permissions(administrator), so members without Administrator
+never see it, and every command in it also checks for the owner (owner_only). Each
+command other than the summary is run by the cog it belongs to."""
 import os
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -17,7 +22,9 @@ SUMMARY_TIME = time(hour=18, minute=0, tzinfo=ZoneInfo(os.getenv("TZ", "America/
 MAX_PAGES = 20     # pages of 100 when looking back a week; a library rebuild could list everything
 
 
-class Admin(commands.Cog):
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+class Admin(commands.GroupCog, group_name="admin", group_description="Owner only: posts, checks and diagnostics"):
     def __init__(self, bot):
         self.bot = bot
 
@@ -100,7 +107,7 @@ class Admin(commands.Cog):
         except Exception as e:
             print(f"Error sending the admin summary: {e}")
 
-    @app_commands.command(name="jf-admin-summary", description="(Owner) Post the weekly admin summary now")
+    @app_commands.command(name="summary", description="Post the weekly admin summary now")
     @owner_only()
     async def admin_summary_command(self, interaction: discord.Interaction):
         """In the admin channel, or only to you when there is none."""
@@ -113,6 +120,36 @@ class Admin(commands.Cog):
             return
         await channel.send(embed=embed)
         await interaction.followup.send(f"Posted in {channel.mention}.", ephemeral=True)
+
+    @app_commands.command(name="weekly-digest", description="Post the weekly digest now")
+    @owner_only()
+    async def weekly_digest(self, interaction: discord.Interaction):
+        await self.bot.get_cog("Digest").post_now(interaction)
+
+    @app_commands.command(name="weekly-new", description="Post the weekly New on EddyFlix list now")
+    @owner_only()
+    async def weekly_new(self, interaction: discord.Interaction):
+        await self.bot.get_cog("WeeklyNew").post_now(interaction)
+
+    @app_commands.command(name="selftest", description="Check the bot end to end, Discord included")
+    @owner_only()
+    async def selftest(self, interaction: discord.Interaction):
+        await self.bot.get_cog("SelfTest").run(interaction)
+
+    @app_commands.command(name="health", description="Server health and resource usage")
+    @owner_only()
+    async def health(self, interaction: discord.Interaction):
+        await self.bot.get_cog("Server").health(interaction)
+
+    @app_commands.command(name="sessions", description="Plays never closed in the database")
+    @owner_only()
+    async def sessions(self, interaction: discord.Interaction, limit: int = 20):
+        await self.bot.get_cog("Achievements").debug_sessions(interaction, limit)
+
+    @app_commands.command(name="achievements", description="Everyone's watch time, best streak and finished series")
+    @owner_only()
+    async def achievements(self, interaction: discord.Interaction, limit: int = 50):
+        await self.bot.get_cog("Achievements").achievements_all(interaction, limit)
 
 
 async def setup(bot):

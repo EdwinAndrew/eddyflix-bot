@@ -84,7 +84,7 @@ def test_library_section():
 def test_people_section():
     plays = [play(user="eddy", minutes=120), play(user="Sarah", minutes=30), play(user="eddy", minutes=None)]
     text = summary.people_section(plays, ["Aldrin", "eddy", "Julie", "Sarah"], {"EDDY", "Sarah"})
-    assert text == "**Active (2):** eddy 2.0h, Sarah 0.5h\n**Not linked with /jf-link (2):** Aldrin, Julie"
+    assert text == "**Active (2):** eddy 2.0h, Sarah 0.5h\n**Not linked with /link (2):** Aldrin, Julie"
     assert "Jellyfin did not answer" in summary.people_section([], None, set())
 
 
@@ -115,7 +115,7 @@ def test_health_section():
         "Jellyfin 12.4.0 · restart pending",
         "Disk (Shows, Movies): 12.3 TB free of 14.7 TB",
         "Disk (Collections, Jellyfin data, transcodes): 4.0 GB free of 50.0 GB ⚠️",
-        "71 plays never closed in the database (/jf-debug-sessions)",
+        "71 plays never closed in the database (/admin sessions)",
     ]
     assert "Jellyfin did not answer just now" in summary.health_section({}, T0)
 
@@ -294,7 +294,7 @@ def test_the_admin_cog_puts_it_together(db_path):
     fields = {f.name: f.value for f in embed.fields}
     assert fields["▶️ Playback"] == "Nothing played this week."
     assert fields["📚 Library"] == "**1 film:** The Odyssey (2026)\n**1 episode** of 1 show: Fallout 1"
-    assert "**Not linked with /jf-link (2):** eddy, Kevin" in fields["👥 People"]
+    assert "**Not linked with /link (2):** eddy, Kevin" in fields["👥 People"]
     assert "Jellyfin 12.4.0" in fields["🩺 Health"]
 
     bot.jf = SummaryJellyfin(fail=True)

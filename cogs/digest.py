@@ -1,4 +1,4 @@
-"""The weekly digest: Sundays at 6 PM, or now with /jf-weekly-digest (owner only)."""
+"""The weekly digest: Sundays at 6 PM, or now with /admin weekly-digest (owner only)."""
 import io
 import os
 from datetime import datetime, timedelta, time
@@ -7,13 +7,11 @@ from zoneinfo import ZoneInfo
 import aiosqlite
 import discord
 import matplotlib
-from discord import app_commands
 from discord.ext import commands, tasks
 from PIL import Image, ImageDraw, ImageFont
 
 import config
 import tiers
-from checks import owner_only
 
 
 def generate_badge(title: str, subtitle: str = ""):
@@ -253,10 +251,8 @@ class Digest(commands.Cog):
         if datetime.now().weekday() == 6:  # Sunday
             await self.generate_weekly_digest()
 
-    @app_commands.command(name="jf-weekly-digest", description="(Owner) Post the weekly digest now")
-    @owner_only()
-    async def weekly_digest_command(self, interaction: discord.Interaction):
-        """Manually trigger the weekly digest"""
+    async def post_now(self, interaction: discord.Interaction):
+        """/admin weekly-digest"""
         await interaction.response.defer()
 
         try:
