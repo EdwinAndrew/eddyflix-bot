@@ -1,0 +1,17 @@
+{
+ "item": {
+  "Name": "The Apothecary Diaries",
+  "Id": "7ab9252670922b7f8f5ad32d2d076bea",
+  "Genres": [
+   "Animation",
+   "Mystery",
+   "Drama"
+  ],
+  "RunTimeTicks": 13800000000,
+  "ProductionYear": 2023,
+  "Type": "Series",
+  "Status": "Continuing",
+  "Overview": "Overview trimmed from the recording."
+ },
+ "episode_count": 54
+}

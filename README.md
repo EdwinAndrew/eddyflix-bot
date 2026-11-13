@@ -18,14 +18,14 @@ Feature work and bugs are tracked in the
 | **New-episode DMs** | `/jf-subscribe` to a show from the library and the bot DMs you when new episodes land, one message per show per batch ("6 new episodes of Fallout: S02E01–E06") with the poster and links. Checked every five minutes; a show still importing is held for ten minutes so a whole season is one message. Closed DMs get a mention in the activity channel instead |
 | **Find something to watch** | `/watch` searches films and shows and answers only you: poster, overview, runtime, a link to open it in Jellyfin and, once you have used `/jf-link`, where you left off (the next episode, or the time you stopped a film at) |
 | **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`, a reminder 15 minutes before, the event shown as live, and a recap of who was in the Theatre. See below |
-| **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push |
+| **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push. `/jf-selftest` (owner) checks everything end to end; see [Testing](#testing) |
 
 ### Commands
 
 `/jf-health` · `/jf-stats` · `/jf-status` · `/jf-recent` · `/jf-stats-graph` · `/jf-popular` ·
 `/jf-subscribe` · `/jf-unsubscribe` · `/jf-subscriptions` · `/jf-weekly-digest` ·
 `/jf-achievements` · `/jf-achievements-all` · `/jf-link` · `/jf-streaks` · `/jf-streaks-leaderboard` ·
-`/jf-debug-sessions` · `/jf-help` · `/watch` · `/movienight` · `/movievote`
+`/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/movienight` · `/movievote`
 
 ### Movie night
 
@@ -103,6 +103,7 @@ All settings are in [.env.example](.env.example).
 | `jellyfin_client.py` | Jellyfin API calls |
 | `watch_data.py` | The SQLite database: recording plays, streaks, achievements |
 | `checks.py` | The owner-only check and the slash-command error handler |
+| `selftest.py` | Read-only checks against the live Jellyfin and the database, run after each deploy and by `/jf-selftest` |
 | `parties.py` | Working out watch parties from Jellyfin's sessions |
 | `screenings.py` | Movie night timing: when to remind, start and end, who attended, the recap |
 | `new_episodes.py` | Finding newly added episodes and grouping them for subscription DMs |
@@ -122,13 +123,32 @@ cp .env.example .env    # fill in, then:
 set -a; . ./.env; set +a; python bot.py
 ```
 
-**Tests** live in `tests/`: time parsing, the role picker, streaks and achievements against a
-throwaway database, movie night timing and attendance, new-episode batching for subscriptions,
-and the command set. CI runs them on every push and pull request, before anything is built.
+### Testing
+
+Three layers, from cheapest to the real thing:
+
+1. **Unit tests** in `tests/`, run by CI on every push and pull request before anything is built:
+   time parsing, the role picker, streaks and achievements against a throwaway database, movie
+   night timing and attendance, new-episode batching, the command set, and the Discord calls
+   against fake objects. `tests/test_recorded_jellyfin.py` runs `/watch` and the new-episode DMs
+   against **real Jellyfin responses** in `tests/fixtures/jellyfin/`, recorded from the server
+   (trimmed, no user names) by `tests/fixtures/record_jellyfin.py`. Re-record when Jellyfin is
+   upgraded; the docstring says how
+2. **After each deploy**, against the live Jellyfin, read-only:
+   `docker exec jellyfin-discord-bot python selftest.py`. One line per check, exit 1 on failure
+3. **`/jf-selftest`** in Discord, owner only, once per release: the same checks plus the ones only
+   Discord can answer. It DMs you samples of the new-episode DM, the movie night reminder and the
+   recap; creates, starts, ends and deletes a private test event in 🎥 Theatre; checks the bot can
+   post and ping Ticket Holders in `#movie-night`; and, if you are in Theatre, that it sees you.
+   It pings nobody and leaves nothing behind
+
+What only a real night shows: how quickly Discord ends an empty live event, and the recap with
+real people.
 
 **Releasing:** merge to `main`, then tag `vX.Y.Z` and push the tag. The workflow runs the tests,
 builds the image, checks that the bot imports, and publishes `X.Y.Z` (and `sha-…` for every `main` commit). The
 server pins a version, so nothing changes there until its compose file moves to the new tag.
+After deploying, run `selftest.py` in the container, then `/jf-selftest` in Discord.
 
 ## History
 

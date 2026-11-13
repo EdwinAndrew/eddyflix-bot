@@ -1,0 +1,39 @@
+{
+ "item": {
+  "Name": "Yellowstone (2018)",
+  "Id": "34e688e6151160a75365d37c3818fa39",
+  "Genres": [
+   "Drama",
+   "Western"
+  ],
+  "RunTimeTicks": 30600000000,
+  "ProductionYear": 2018,
+  "Type": "Series",
+  "UserData": {
+   "PlayedPercentage": 1.8867924528301887,
+   "UnplayedItemCount": 52,
+   "PlaybackPositionTicks": 0,
+   "Played": false
+  },
+  "RecursiveItemCount": 53,
+  "ChildCount": 5,
+  "Status": "Ended",
+  "Overview": "Overview trimmed from the recording."
+ },
+ "next": {
+  "Name": "Kill the Messenger",
+  "Id": "b32bd7dc6134e0149b533dfb6374f917",
+  "RunTimeTicks": 31881580000,
+  "ProductionYear": 2018,
+  "IndexNumber": 2,
+  "ParentIndexNumber": 1,
+  "Type": "Episode",
+  "UserData": {
+   "PlayedPercentage": 16.985670835636128,
+   "PlaybackPositionTicks": 5415300236,
+   "Played": false
+  },
+  "SeriesName": "Yellowstone (2018)",
+  "SeriesId": "34e688e6151160a75365d37c3818fa39"
+ }
+}
