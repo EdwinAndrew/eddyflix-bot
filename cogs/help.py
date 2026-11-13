@@ -26,7 +26,8 @@ class Help(commands.Cog):
             name="🎬 Find something to watch",
             value=(
                 "`/watch <title>` - Find a film or show, get a link and where you left off\n"
-                "`/pick [type] [genre] [max_length]` - Something to watch at random, with a reroll\n"
+                "`/pick [type] [genre] [max_length] [with]` - Something to watch at random, with a reroll; "
+                "`with` a member for what neither of you has seen\n"
                 "`/continue` - What you were in the middle of\n"
                 "`/request <title>` - Ask for a film or show to be added; DMs you when it's ready"
             ),

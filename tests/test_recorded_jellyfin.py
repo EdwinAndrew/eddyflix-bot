@@ -1,4 +1,4 @@
-"""/watch and the new-episode DMs against real Jellyfin responses, recorded from the
+"""/watch, "episodes ahead of you" and the new-episode DMs against real Jellyfin responses, recorded from the
 server by tests/fixtures/record_jellyfin.py (trimmed, no user names or ids).
 
 These catch Jellyfin answering differently from what the code expects, which
@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import config
+import household
 import new_episodes
 from cogs.subscriptions import notification_embed
 from cogs.watch import film_progress, series_progress, watch_card
@@ -62,6 +63,20 @@ def test_show_for_someone_not_linked():
     embed = watch_card({**rec["item"], "RecursiveItemCount": rec["episode_count"]}, None)
     assert fields(embed)["Show"] == "54 episodes · ~23m each"
     assert "/link" in embed.footer.text
+
+
+def test_where_someone_is_in_a_show():
+    # The Simpsons: 13 episodes in season 1, so S02E10 has 22 before it, the 22 watched
+    rec = load("series_up_next")
+    simpsons = household.episode_order([{"ParentIndexNumber": s, "IndexNumber": n}
+                                        for s, size in ((1, 13), (2, 22), (3, 24)) for n in range(1, size + 1)])
+    assert household.position(simpsons, rec["item"], rec["next"]) == 22
+    # Yellowstone: E01 watched, half-way through E02
+    rec = load("series_resume")
+    yellowstone = household.episode_order([{"ParentIndexNumber": 1, "IndexNumber": n} for n in range(1, 10)])
+    assert household.position(yellowstone, rec["item"], rec["next"]) == 1
+    # Asked without a user there is no UserData: not started
+    assert not household.started(load("series_no_user")["item"], None)
 
 
 def test_a_season_import_is_one_message_per_show():
