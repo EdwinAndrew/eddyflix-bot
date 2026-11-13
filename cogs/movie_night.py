@@ -1,4 +1,5 @@
-"""Movie night: themed roles, a role picker in #roles, /movienight and /movievote,
+"""Movie night: themed roles, a role picker and a getting-started guide in #roles,
+/movienight and /movievote,
 and following each night through: a reminder, the start, and a recap.
 
 The bot creates the roles and channels below at start-up if they are missing,
@@ -9,8 +10,10 @@ start, so rename it here instead.
 import io
 import random
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import discord
@@ -44,6 +47,8 @@ STAFF = [
 ]
 
 PICKER_TITLE = "🎭 Pick your flair"
+GUIDE_TITLE = "👋 New here? Start watching"
+LINK_LABEL = "Which Jellyfin user are you?"
 
 
 @dataclass(frozen=True)
@@ -76,6 +81,7 @@ FLAIRS = [
     Flair("❓", "Explain the Ending", 0xFF8FB1, "Still confused after the credits"),
 ]
 FLAIR_BY_LABEL = {f.label: f for f in FLAIRS}
+SPOILER_FLAIR = FLAIR_BY_LABEL["Spoiler Alert"]   # what /spoiler hands out
 
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 JELLYFIN_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -179,6 +185,8 @@ def picker_embed() -> discord.Embed:
             f"{lines}\n\n"
             f"**{TICKET_ROLE}** is the one that does something: you get pinged when a movie night "
             "is scheduled. Use the button to get it or drop it.\n\n"
+            f"**👤 {LINK_LABEL}** tells the bot who you are on Jellyfin, for `/watch`, achievements, "
+            "new-episode DMs and movie night attendance.\n\n"
             f"Staff: **{DIRECTOR_ROLE}** runs the place, **{USHER_ROLE}** keeps order."
         ),
         colour=discord.Colour(0xF4C430),
@@ -204,7 +212,7 @@ class RolePicker(discord.ui.View):
 
     async def on_flairs(self, interaction: discord.Interaction):
         chosen = [FLAIR_BY_LABEL[v] for v in interaction.data.get("values", []) if v in FLAIR_BY_LABEL]
-        await set_flairs(interaction, chosen)
+        await set_flairs(interaction, chosen, await spoiler_lock(interaction))
 
     @discord.ui.button(label="Ping me for movie nights", emoji="🎟️", style=discord.ButtonStyle.primary,
                        custom_id="movienight:ticket", row=1)
@@ -223,10 +231,30 @@ class RolePicker(discord.ui.View):
     @discord.ui.button(label="Remove my flairs", style=discord.ButtonStyle.secondary,
                        custom_id="movienight:clear", row=1)
     async def clear(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await set_flairs(interaction, [])
+        await set_flairs(interaction, [], await spoiler_lock(interaction))
+
+    @discord.ui.button(label=LINK_LABEL, emoji="👤", style=discord.ButtonStyle.success,
+                       custom_id="movienight:link", row=2)
+    async def link(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await offer_link(interaction)
 
 
-async def set_flairs(interaction: discord.Interaction, chosen: list[Flair]):
+async def spoiler_lock(interaction: discord.Interaction) -> int | None:
+    """When the member's Spoiler Alert from /spoiler runs out, if it is running."""
+    try:
+        return await watch_data.spoiler_until(interaction.guild.id, interaction.user.id, int(time.time()))
+    except Exception as e:
+        print(f"Role picker: could not check /spoiler ({e})")
+        return None
+
+
+async def set_flairs(interaction: discord.Interaction, chosen: list[Flair], locked_until: int | None = None):
+    """Give the member exactly these flairs. locked_until: Spoiler Alert from /spoiler
+    is running until then (Unix time), so it stays on whatever they pick."""
+    kept = locked_until is not None and SPOILER_FLAIR not in chosen
+    others = list(chosen)
+    if kept:
+        chosen = [*chosen, SPOILER_FLAIR]
     guild, member = interaction.guild, interaction.user
     wanted = {r for f in chosen if (r := role(guild, f.role_name))}
     every = {r for f in FLAIRS if (r := role(guild, f.role_name))}
@@ -236,11 +264,133 @@ async def set_flairs(interaction: discord.Interaction, chosen: list[Flair]):
         await member.add_roles(*add, reason="Role picker")
     if drop:
         await member.remove_roles(*drop, reason="Role picker")
-    if wanted:
+    if kept:
+        first = f"Your flair: {', '.join(f.role_name for f in others)}" if others else "Flairs cleared"
+        await interaction.response.send_message(
+            f"{first}, but **{SPOILER_FLAIR.role_name}** stays on until <t:{locked_until}:f> "
+            f"(<t:{locked_until}:R>). Staff gave it to you with `/spoiler`, so it can't come off before then.",
+            ephemeral=True)
+    elif wanted:
         names = ", ".join(f.role_name for f in chosen)
         await interaction.response.send_message(f"Your flair: {names}", ephemeral=True)
     else:
         await interaction.response.send_message("Flairs cleared.", ephemeral=True)
+
+
+# --- linking a Jellyfin user from #roles -------------------------------------
+# The same as /jf-link, for people who don't know the command. The button is on
+# the picker, so it survives restarts with it; the menu it answers with is made
+# fresh each time, so it always lists who is still free.
+
+LINK_MENU_LIMIT = 25   # options in one select menu
+
+
+def link_choices(names: list[str], linked: set[str]) -> tuple[list[str], bool]:
+    """Jellyfin users nobody is linked to yet (linked is lower case), the first 25
+    by name, and whether some did not fit."""
+    free = sorted((n for n in names if n.lower() not in linked and len(n) <= 100), key=str.lower)
+    return free[:LINK_MENU_LIMIT], len(free) > LINK_MENU_LIMIT
+
+
+def link_prompt(mine: str | None, free: list[str], more: bool) -> str:
+    """What the link button answers. mine is the member's current link, if any."""
+    if mine:
+        text = f"You're **{mine}** on Jellyfin."
+        text += " Not right? Pick yourself below." if free else " Not right? Ask the server owner to fix it."
+    elif free:
+        text = "Which Jellyfin user are you? Only the ones nobody has claimed yet are listed."
+    else:
+        text = ("Every Jellyfin user is linked to someone already. If yours is taken, ask the server owner. "
+                f"No account yet? Ask the server owner or a **{DIRECTOR_ROLE}**.")
+    if more:
+        text += "\nNot in the list? Use `/jf-link` with your Jellyfin user name."
+    return text
+
+
+def linked_message(name: str) -> str:
+    return (f"You're now **{name}** on Jellyfin. `/watch` shows where you left off, `/jf-achievements` "
+            "shows your card, and movie nights count towards it.")
+
+
+class LinkMenu(discord.ui.View):
+    """The menu the link button answers with, seen only by whoever pressed it."""
+
+    def __init__(self, names: list[str]):
+        super().__init__(timeout=300)
+        menu = discord.ui.Select(placeholder="I'm…",
+                                 options=[discord.SelectOption(label=n, value=n) for n in names])
+        menu.callback = self.on_pick
+        self.add_item(menu)
+
+    async def on_pick(self, interaction: discord.Interaction):
+        name = interaction.data["values"][0]
+        mine = await watch_data.get_link(interaction.user.id)
+        # Someone may have picked the same user since the menu was made
+        if name.lower() in await watch_data.linked_jellyfin_users() and (mine or "").lower() != name.lower():
+            await interaction.response.edit_message(
+                content=f"Someone has just claimed **{name}**. If that's you, ask the server owner.", view=None)
+            return
+        await watch_data.set_link(interaction.user.id, name)
+        await interaction.response.edit_message(content=linked_message(name), view=None)
+
+
+async def offer_link(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    jf = getattr(interaction.client, "jf", None)
+    try:
+        names = await jf.get_user_names() if jf else []
+    except Exception:
+        names = []
+    if not names:
+        await interaction.followup.send("I can't reach Jellyfin right now. Try again later, or use `/jf-link`.",
+                                        ephemeral=True)
+        return
+    mine = await watch_data.get_link(interaction.user.id)
+    free, more = link_choices(names, await watch_data.linked_jellyfin_users())
+    await interaction.followup.send(link_prompt(mine, free, more), ephemeral=True,
+                                    **({"view": LinkMenu(free)} if free else {}))
+
+
+# --- the getting-started guide in #roles -------------------------------------
+
+def guide_embed(owner_id: int | None = None) -> discord.Embed:
+    """How to get an account and start watching, then what to do here. Posted in
+    #roles next to the picker and edited in place the same way, so a change to the
+    text or the addresses shows up after a restart."""
+    owner = f"<@{owner_id}>" if owner_id else "the server owner"
+    url = config.JELLYFIN_PUBLIC_URL
+    if url:
+        port = " Type it exactly, port and all." if urlsplit(url).port else ""
+        address = f"Server address: **{url}**.{port}"
+    else:
+        address = "Ask for the server address when you get your account."
+    embed = discord.Embed(
+        title=GUIDE_TITLE,
+        description="EddyFlix is a private Jellyfin server: films and shows, streamed to whatever you watch on.",
+        colour=discord.Colour(0x00A4DC),   # Jellyfin blue
+    )
+    embed.add_field(name="1. Get an account", inline=False, value=(
+        f"Ask {owner} or a **{DIRECTOR_ROLE}** for a Jellyfin login. There's no sign-up page."))
+    embed.add_field(name="2. Get the app", inline=False, value=(
+        "📺 **LG TV**: the *Jellyfin* app from the LG Content Store (webOS)\n"
+        "📱 **iPhone**: the *Jellyfin* app from the App Store\n"
+        "💻 **Browser**: no app needed, open the address below"))
+    embed.add_field(name="3. Connect", inline=False, value=f"{address}\nThen sign in with your login.")
+    if config.SEERR_PUBLIC_URL:
+        embed.add_field(name="Something missing?", inline=False, value=(
+            f"Request it on Seerr: **{config.SEERR_PUBLIC_URL}**, with the same login."))
+    who, it = ("Jellyfin and Seerr only answer", "they") if config.SEERR_PUBLIC_URL else ("Jellyfin only answers", "it")
+    embed.add_field(name="🇨🇦 Canada only", inline=False, value=(
+        f"{who} from Canada. Abroad, or on a VPN that comes out somewhere else, {it} won't load."))
+    embed.add_field(name="Then, here on Discord", inline=False, value=(
+        f"👤 **{LINK_LABEL}** on the flair picker in this channel tells the bot who you are on "
+        "Jellyfin (or use `/jf-link`). `/watch` progress, achievements, new-episode DMs and "
+        "movie night attendance all need it\n"
+        f"🎟️ **Ping me for movie nights** gets you a ticket, so you hear when one is on\n"
+        "Worth knowing: `/watch` finds something and where you left off · `/jf-subscribe` DMs you "
+        "new episodes of a show · `/jf-achievements` shows your watch time and badges · "
+        "`/jf-help` lists the rest"))
+    return embed
 
 
 # --- creating what is missing ----------------------------------------------
@@ -310,13 +460,21 @@ async def _ensure_guild(bot: discord.Client, guild: discord.Guild):
         return
     if roles_channel.overwrites_for(everyone).send_messages is not False:
         await roles_channel.edit(overwrites={**roles_channel.overwrites, **read_only}, reason=why)
-    # One picker message, edited in place so a change to FLAIRS shows up after a restart.
+    # The guide and the picker: one message each, found by title and edited in
+    # place, so a change here shows up after a restart. A new #roles gets the
+    # guide first, so it reads top down; an older one gets it under the picker.
+    found = {}
     async for message in roles_channel.history(limit=50):
-        if message.author == bot.user and message.embeds and message.embeds[0].title == PICKER_TITLE:
-            await message.edit(embed=picker_embed(), view=RolePicker())
-            return
-    await roles_channel.send(embed=picker_embed(), view=RolePicker())
-    print(f"Posted the role picker in #{ROLES_CHANNEL}")
+        if message.author == bot.user and message.embeds:
+            found.setdefault(message.embeds[0].title, message)
+    posts = [(GUIDE_TITLE, "the getting-started guide", {"embed": guide_embed(guild.owner_id)}),
+             (PICKER_TITLE, "the role picker", {"embed": picker_embed(), "view": RolePicker()})]
+    for title, what, content in posts:
+        if title in found:
+            await found[title].edit(**content)
+        else:
+            await roles_channel.send(**content)
+            print(f"Posted {what} in #{ROLES_CHANNEL}")
 
 
 # --- slash commands --------------------------------------------------------

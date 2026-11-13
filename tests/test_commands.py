@@ -10,7 +10,7 @@ EXPECTED = {
     "jf-achievements", "jf-achievements-all", "jf-debug-sessions", "jf-health", "jf-help", "jf-link",
     "jf-popular", "jf-recent", "jf-selftest", "jf-stats", "jf-stats-graph", "jf-status", "jf-streaks",
     "jf-streaks-leaderboard", "jf-subscribe", "jf-subscriptions", "jf-unsubscribe",
-    "jf-weekly-digest", "movienight", "movievote", "watch",
+    "jf-weekly-digest", "movienight", "movievote", "spoiler", "unspoiler", "watch",
 }
 OWNER_ONLY = {"jf-achievements-all", "jf-debug-sessions", "jf-selftest", "jf-weekly-digest"}
 

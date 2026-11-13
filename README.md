@@ -14,10 +14,11 @@ Feature work and bugs are tracked in the
 | **Dashboard** | One message in a channel, edited every minute: server status and active streams |
 | **Activity feed** | Connections, playback starts, switches and stops with posters, and a warning at three transcodes. Two or more people on the same title at about the same point get one **🍿 Watching together** post instead, edited as people join and turned into **🎬 Watched together** at the end |
 | **Weekly digest** | Sundays at 6 PM: watch time, top shows, who watched most |
-| **Achievements and streaks** | Watch-time tiers with badges, popcorn from the cob up: Corn at 10 h, Kernel 50, Popcorn 100, Salted 250, Buttery Popcorn 500, Bottomless Bucket 1,000. Small versions are uploaded as the bot's own emojis at start-up, so the card shows the collection inline; finished series (every episode in the library watched), daily watch streaks, movie nights attended. `/jf-achievements` shows them as one card; `/jf-link` ties a Discord member to their Jellyfin user |
+| **Achievements and streaks** | Watch-time tiers with badges, popcorn from the cob up: Corn at 10 h, Kernel 50, Popcorn 100, Salted 250, Buttery Popcorn 500, Bottomless Bucket 1,000. Small versions are uploaded as the bot's own emojis at start-up, so the card shows the collection inline; finished series (every episode in the library watched), daily watch streaks, movie nights attended. `/jf-achievements` shows them as one card; `/jf-link`, or the 👤 button in `#roles`, ties a Discord member to their Jellyfin user |
 | **New-episode DMs** | `/jf-subscribe` to a show from the library and the bot DMs you when new episodes land, one message per show per batch ("6 new episodes of Fallout: S02E01–E06") with the poster and links. Checked every five minutes; a show still importing is held for ten minutes so a whole season is one message. Closed DMs get a mention in the activity channel instead |
 | **Find something to watch** | `/watch` searches films and shows and answers only you: poster, overview, runtime, a link to open it in Jellyfin and, once you have used `/jf-link`, where you left off (the next episode, or the time you stopped a film at) |
-| **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`, a reminder 15 minutes before, the event shown as live, and a recap of who was in the Theatre. See below |
+| **Getting started** | A guide in `#roles` for newcomers: how to get an account, which app on an LG TV, an iPhone or in a browser, the address, where to request things, and what to do on Discord after. The picker next to it has a **Which Jellyfin user are you?** button, the same as `/jf-link` without knowing the command |
+| **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`, a reminder 15 minutes before, the event shown as live, and a recap of who was in the Theatre. `/spoiler` puts someone in *Spoiler Alert* for a while. See below |
 | **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push. `/jf-selftest` (owner) checks everything end to end; see [Testing](#testing) |
 
 ### Commands
@@ -25,7 +26,7 @@ Feature work and bugs are tracked in the
 `/jf-health` · `/jf-stats` · `/jf-status` · `/jf-recent` · `/jf-stats-graph` · `/jf-popular` ·
 `/jf-subscribe` · `/jf-unsubscribe` · `/jf-subscriptions` · `/jf-weekly-digest` ·
 `/jf-achievements` · `/jf-achievements-all` · `/jf-link` · `/jf-streaks` · `/jf-streaks-leaderboard` ·
-`/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/movienight` · `/movievote`
+`/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/movienight` · `/movievote` · `/spoiler` · `/unspoiler`
 
 ### Movie night
 
@@ -34,8 +35,18 @@ On start the bot creates whatever is missing, and never deletes anything:
 - **Roles.** 🎬 Director (admins) and 🔦 Usher (mods), hoisted, with moderation permissions.
   🎟️ Ticket Holder, opt-in, pinged for movie nights. Thirteen cosmetic flairs, "the friend
   everyone has on movie night" (*Talks During the Movie*, *Late Arrival*, *Spoiler Alert*…)
-- **`#roles`** gets a picker message: a menu for flairs and a button for the ticket. It survives
-  restarts and is edited in place when the list changes
+- **`#roles`** gets two messages, each found by its title and edited in place on every start, so
+  a change to the text or the settings shows up after a restart:
+  - **A getting-started guide**: ask the owner or a 🎬 Director for an account; the Jellyfin app
+    on an LG TV (webOS) or an iPhone, or a browser; the address (`JELLYFIN_PUBLIC_URL`); requests
+    on Seerr (`SEERR_PUBLIC_URL`, left out when unset); Canada only; then link yourself, take a
+    ticket, and a few commands. It lives in `#roles` rather than a channel of its own because
+    its last steps are the buttons right there. A new `#roles` gets it above the picker
+  - **A picker**: a menu for flairs, a button for the ticket, and **👤 Which Jellyfin user are
+    you?**. That one answers, only to you, with a menu of the Jellyfin users nobody has linked yet
+    (the first 25; past that, `/jf-link`). Already linked, it says who you are and lets you switch
+    to a free user; a user someone else has claimed can only be moved by the owner with
+    `/jf-link member:`. The buttons survive restarts
 - **A 🎬 Movie Night category**: `#movie-night` (announcements, staff only), `#watch-chat`, and
   a 🎥 Theatre voice channel
 - **`/movienight film day time`**: the film from the library, a day (`tonight`, `friday`,
@@ -43,6 +54,12 @@ On start the bot creates whatever is missing, and never deletes anything:
   and posts an announcement with the poster and SyncPlay steps. **SyncPlay does not open the film
   for the others**: everyone opens the same film, joins the group, then playback stays in sync
 - **`/movievote`**: a Discord poll of up to four films, random ones if none are given
+- **`/spoiler @member [hours]`** (Directors and Ushers): *🙊 Spoiler Alert* for that many hours
+  (default 24, up to a week) and a line in `#watch-chat`. The bot takes it off when the time is up,
+  checking once a minute; the expiry is in the database, so a restart does not lose it. While it
+  runs, the `#roles` picker keeps it on and says until when. Giving it again starts the clock over
+  from now, longer or shorter. **`/unspoiler @member`** lifts it early. Someone who wore the flair
+  by choice before keeps it afterwards
 - **On the night** the bot follows every event it made, checking once a minute. Discord's own
   reminder only reaches people who pressed *Interested*, so:
   - **15 minutes before**, Ticket Holders get a ping in `#movie-night` with the SyncPlay steps
@@ -108,7 +125,7 @@ All settings are in [.env.example](.env.example).
 | `screenings.py` | Movie night timing: when to remind, start and end, who attended, the recap |
 | `new_episodes.py` | Finding newly added episodes and grouping them for subscription DMs |
 | `tiers.py` | Watch-time tiers and drawing their badges. Art in `assets/`, licences in [assets/LICENSES.md](assets/LICENSES.md) |
-| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night`, `watch`, `help` |
+| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night` (and `#roles`: the picker, the Jellyfin link button and the guide), `spoiler`, `watch`, `help` |
 
 Background loops start when the bot dispatches `services_ready`, ten seconds after it connects
 and has set up the database and the movie night channels. Each cog with a loop listens for it.
@@ -128,7 +145,8 @@ set -a; . ./.env; set +a; python bot.py
 Three layers, from cheapest to the real thing:
 
 1. **Unit tests** in `tests/`, run by CI on every push and pull request before anything is built:
-   time parsing, the role picker, streaks and achievements against a throwaway database, movie
+   time parsing, the role picker (and its Spoiler Alert lock), the Jellyfin link
+   menu and the getting-started guide, `/spoiler` expiry, streaks and achievements against a throwaway database, movie
    night timing and attendance, new-episode batching, the command set, and the Discord calls
    against fake objects. `tests/test_recorded_jellyfin.py` runs `/watch` and the new-episode DMs
    against **real Jellyfin responses** in `tests/fixtures/jellyfin/`, recorded from the server

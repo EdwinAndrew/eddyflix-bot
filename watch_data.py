@@ -167,6 +167,20 @@ async def init_database():
             )
         """)
 
+        # Spoiler Alert handed out with /spoiler (#15), removed when it runs out.
+        # expires_at is a Unix time. had_role: they wore the flair already, so it
+        # stays on when the time is up
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS spoilers (
+                guild_id TEXT NOT NULL,
+                discord_user_id TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                given_by TEXT,
+                had_role BOOLEAN DEFAULT 0,
+                PRIMARY KEY (guild_id, discord_user_id)
+            )
+        """)
+
         await db.commit()
         print("Database initialized successfully")
 
@@ -445,6 +459,66 @@ async def set_link(discord_user_id: int, jellyfin_user: str):
             ON CONFLICT(discord_user_id) DO UPDATE SET jellyfin_user = excluded.jellyfin_user,
                                                        linked_at = CURRENT_TIMESTAMP
         """, (str(discord_user_id), jellyfin_user))
+        await db.commit()
+
+
+async def linked_jellyfin_users() -> set[str]:
+    """Jellyfin users some Discord member is linked to, in lower case."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("SELECT DISTINCT jellyfin_user FROM user_links") as cur:
+            return {row[0].lower() for row in await cur.fetchall()}
+
+
+# --- Spoiler Alert (/spoiler) ---------------------------------------------------
+
+async def set_spoiler(guild_id: int, discord_user_id: int, expires_at: int, given_by: int,
+                      had_role: bool) -> int | None:
+    """Start or move a member's Spoiler Alert time. Returns the expiry it replaced,
+    if there was one. had_role is kept from the first time."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("SELECT expires_at FROM spoilers WHERE guild_id = ? AND discord_user_id = ?",
+                              (str(guild_id), str(discord_user_id))) as cur:
+            row = await cur.fetchone()
+        await db.execute("""
+            INSERT INTO spoilers (guild_id, discord_user_id, expires_at, given_by, had_role)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, discord_user_id) DO UPDATE SET expires_at = excluded.expires_at,
+                                                                given_by = excluded.given_by
+        """, (str(guild_id), str(discord_user_id), expires_at, str(given_by), int(had_role)))
+        await db.commit()
+    return row[0] if row else None
+
+
+async def get_spoiler(guild_id: int, discord_user_id: int) -> dict | None:
+    """The member's Spoiler Alert row, running or run out, or None."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("""
+            SELECT expires_at, given_by, had_role FROM spoilers WHERE guild_id = ? AND discord_user_id = ?
+        """, (str(guild_id), str(discord_user_id))) as cur:
+            row = await cur.fetchone()
+    return {"expires_at": row[0], "given_by": row[1], "had_role": bool(row[2])} if row else None
+
+
+async def spoiler_until(guild_id: int, discord_user_id: int, now: int) -> int | None:
+    """When the member's Spoiler Alert runs out, if it is still running at now."""
+    row = await get_spoiler(guild_id, discord_user_id)
+    return row["expires_at"] if row and row["expires_at"] > now else None
+
+
+async def due_spoilers(now: int) -> list[dict]:
+    """Spoiler Alerts that have run out by now."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("""
+            SELECT guild_id, discord_user_id, had_role FROM spoilers WHERE expires_at <= ?
+        """, (now,)) as cur:
+            rows = await cur.fetchall()
+    return [{"guild_id": int(g), "discord_user_id": int(u), "had_role": bool(h)} for g, u, h in rows]
+
+
+async def clear_spoiler(guild_id: int, discord_user_id: int):
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        await db.execute("DELETE FROM spoilers WHERE guild_id = ? AND discord_user_id = ?",
+                         (str(guild_id), str(discord_user_id)))
         await db.commit()
 
 

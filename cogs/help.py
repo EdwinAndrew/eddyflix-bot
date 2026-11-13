@@ -70,10 +70,22 @@ class Help(commands.Cog):
             name="🏆 Achievements & Streaks",
             value=(
                 "`/jf-achievements [user]` - Watch time, streak, movie nights and finished series\n"
-                "`/jf-link <jellyfin user>` - Connect your Discord to your Jellyfin user\n"
+                "`/jf-link <jellyfin user>` - Connect your Discord to your Jellyfin user (or the 👤 button in #roles)\n"
                 "`/jf-achievements-all [limit]` - (Owner) List recent achievements\n"
                 "`/jf-streaks [user]` - Show your watch streak\n"
                 "`/jf-streaks-leaderboard [limit]` - View streak leaderboard"
+            ),
+            inline=False
+        )
+
+        # Movie night
+        embed.add_field(
+            name="🍿 Movie Night (Directors and Ushers)",
+            value=(
+                "`/movienight <film> <day> <time>` - Schedule one: an event and a ping for Ticket Holders\n"
+                "`/movievote [films] [hours]` - Post a poll of films\n"
+                "`/spoiler <member> [hours]` - Spoiler Alert for a while (default 24 hours)\n"
+                "`/unspoiler <member>` - Lift it early"
             ),
             inline=False
         )
