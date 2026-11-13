@@ -40,6 +40,7 @@ class Help(commands.Cog):
                 "`/watch <title>` - Find a film or show, get a link and where you left off\n"
                 "`/pick [type] [genre] [max_length]` - Something to watch at random, with a reroll\n"
                 "`/continue` - What you were in the middle of\n"
+                "`/request <title>` - Ask for a film or show to be added; DMs you when it's ready\n"
                 "`/jf-recent` - Show recently added content\n"
                 "`/jf-popular [limit]` - Show most popular content by watch time"
             ),
