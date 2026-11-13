@@ -127,12 +127,16 @@ class JellyfinClient:
             print(f"Error getting system info: {e}")
             return {}
 
-    async def get_item(self, item_id: str) -> dict:
-        """Get a single item details by id"""
+    async def get_item(self, item_id: str, user_id: str | None = None) -> dict:
+        """Get a single item details by id. With a user id it carries that user's
+        progress in UserData."""
         # /Items/{id} answers 400 here without a user id; the list endpoint
         # filtered to one id does not.
+        endpoint = f"/Items?Ids={item_id}&Fields=Overview,Genres,ProductionYear,ChildCount,RecursiveItemCount"
+        if user_id:
+            endpoint += f"&userId={user_id}"
         try:
-            result = await self._get(f"/Items?Ids={item_id}&Fields=Overview,Genres")
+            result = await self._get(endpoint)
             items = result.get('Items', []) if isinstance(result, dict) else []
             return items[0] if items else {}
         except Exception as e:
@@ -147,6 +151,24 @@ class JellyfinClient:
             endpoint += f"&SearchTerm={quote(term)}"
         result = await self._get(endpoint)
         return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def search_titles(self, term: str = "", limit: int = 25) -> List[dict]:
+        """Films and series whose title matches term (all of them, by name, when term is empty)."""
+        endpoint = (f"/Items?IncludeItemTypes=Movie,Series&Recursive=true&Limit={limit}"
+                    f"&SortBy=SortName&Fields=ProductionYear&{FILMS_NOT_COLLECTIONS}")
+        if term:
+            endpoint += f"&SearchTerm={quote(term)}"
+        result = await self._get(endpoint)
+        return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def next_up(self, user_id: str, series_id: str) -> dict | None:
+        """The episode of a series this user would watch next, half-watched ones
+        included, or None when there is none."""
+        # NextUp honours seriesId, unlike /Items, which ignores SeriesId.
+        result = await self._get(f"/Shows/NextUp?userId={user_id}&seriesId={series_id}"
+                                 f"&Limit=1&enableResumable=true")
+        items = result.get('Items', []) if isinstance(result, dict) else []
+        return items[0] if items else None
 
     async def random_movies(self, count: int) -> List[dict]:
         result = await self._get(
@@ -181,6 +203,14 @@ class JellyfinClient:
         """Jellyfin's user names, for /jf-link."""
         result = await self._get("/Users")
         return sorted((u.get('Name') for u in result if u.get('Name')), key=str.lower) if isinstance(result, list) else []
+
+    async def get_user_id(self, name: str) -> str | None:
+        """The id of the Jellyfin user with this name (any case), or None."""
+        result = await self._get("/Users")
+        for user in result if isinstance(result, list) else []:
+            if (user.get('Name') or '').lower() == name.lower():
+                return user.get('Id')
+        return None
 
     async def get_series_episode_count(self, series_id: str) -> int:
         """Episodes of a series in the library; 0 if Jellyfin does not answer."""

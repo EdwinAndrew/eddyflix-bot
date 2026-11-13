@@ -6,7 +6,6 @@ role or channel in Discord and the bot creates the old name again on its next
 start, so rename it here instead.
 """
 import io
-import os
 import random
 import re
 from dataclasses import dataclass
@@ -17,10 +16,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import config
+
 TZ = ZoneInfo("America/Toronto")
-# Where people open Jellyfin from, e.g. https://jellyfin.example.com. Used for
-# links only, never for images. Empty means announcements carry no link.
-PUBLIC_URL = os.getenv("JELLYFIN_PUBLIC_URL", "").rstrip("/")
 
 ROLES_CHANNEL = "roles"
 CATEGORY = "🎬 Movie Night"
@@ -90,9 +88,15 @@ def can_host(member: discord.Member) -> bool:
     return member.guild_permissions.manage_events or any(r.name in (DIRECTOR_ROLE, USHER_ROLE) for r in member.roles)
 
 
+def details_link(item_id: str) -> str | None:
+    """The item's page in Jellyfin's web app, or None without JELLYFIN_PUBLIC_URL."""
+    return f"{config.JELLYFIN_PUBLIC_URL}/web/#/details?id={item_id}" if config.JELLYFIN_PUBLIC_URL else None
+
+
 def film_label(item: dict) -> str:
-    year = item.get("ProductionYear")
-    return f"{item.get('Name', 'Unknown')} ({year})" if year else item.get("Name", "Unknown")
+    name, year = item.get("Name", "Unknown"), item.get("ProductionYear")
+    # Some names carry the year already: "Yellowstone (2018)"
+    return f"{name} ({year})" if year and not name.endswith(f"({year})") else name
 
 
 def parse_day(text: str, now: datetime):
@@ -353,7 +357,7 @@ class MovieNight(commands.Cog):
         minutes = int((item.get("RunTimeTicks") or 0) / 600_000_000) or 120
         overview = (item.get("Overview") or "").strip()
         genres = ", ".join(item.get("Genres") or []) or "—"
-        link = f"{PUBLIC_URL}/web/#/details?id={item['Id']}" if PUBLIC_URL else None
+        link = details_link(item["Id"])
         film_ref = f"[{item.get('Name')}]({link})" if link else f"**{item.get('Name')}**"
         backdrop = await self.bot.jf.get_image(item["Id"], "Backdrop") or await self.bot.jf.get_image(item["Id"], "Primary")
         poster = await self.bot.jf.get_image(item["Id"], "Primary", max_width=600)

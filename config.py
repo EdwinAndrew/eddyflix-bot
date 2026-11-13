@@ -8,6 +8,10 @@ DASHBOARD_CHANNEL_ID = int(os.getenv("DASHBOARD_CHANNEL_ID", "0"))
 ACTIVITY_CHANNEL_ID = int(os.getenv("ACTIVITY_CHANNEL_ID", "0"))
 UPDATE_INTERVAL = int(os.getenv("UPDATE_INTERVAL", "60"))
 
+# Where people open Jellyfin from, e.g. https://jellyfin.example.com. Used for
+# links only, never for images. Empty means no links.
+JELLYFIN_PUBLIC_URL = os.getenv("JELLYFIN_PUBLIC_URL", "").rstrip("/")
+
 # Uptime Kuma has no Docker socket, so it cannot see the container's health
 # status. Each good heartbeat also hits a Kuma Push monitor, which alerts when
 # the pushes stop. Optional: empty means file only.
