@@ -1,0 +1,38 @@
+{
+ "item": {
+  "Name": "The Simpsons",
+  "Id": "ae9be71280cab9990dde8ec39a7e455a",
+  "Genres": [
+   "Comedy",
+   "Animation"
+  ],
+  "RunTimeTicks": 14400000000,
+  "ProductionYear": 1989,
+  "Type": "Series",
+  "UserData": {
+   "PlayedPercentage": 9.777777777777779,
+   "UnplayedItemCount": 203,
+   "PlaybackPositionTicks": 0,
+   "Played": false
+  },
+  "RecursiveItemCount": 225,
+  "ChildCount": 11,
+  "Status": "Continuing",
+  "Overview": "Overview trimmed from the recording."
+ },
+ "next": {
+  "Name": "Bart Gets Hit by a Car",
+  "Id": "b98edd84281a3dd4bdae32fea6d3706f",
+  "RunTimeTicks": 13934079999,
+  "ProductionYear": 1991,
+  "IndexNumber": 10,
+  "ParentIndexNumber": 2,
+  "Type": "Episode",
+  "UserData": {
+   "PlaybackPositionTicks": 0,
+   "Played": false
+  },
+  "SeriesName": "The Simpsons",
+  "SeriesId": "ae9be71280cab9990dde8ec39a7e455a"
+ }
+}

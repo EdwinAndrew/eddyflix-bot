@@ -1,0 +1,20 @@
+{
+ "item": {
+  "Name": "Rush Hour",
+  "Id": "b54e57aa7b26fd7073107669313fb437",
+  "Genres": [
+   "Action",
+   "Comedy",
+   "Crime"
+  ],
+  "RunTimeTicks": 58698970000,
+  "ProductionYear": 1998,
+  "Type": "Movie",
+  "UserData": {
+   "PlayedPercentage": 6.47846967161434,
+   "PlaybackPositionTicks": 3802794969,
+   "Played": false
+  },
+  "Overview": "Overview trimmed from the recording."
+ }
+}

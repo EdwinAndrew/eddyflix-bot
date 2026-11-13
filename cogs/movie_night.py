@@ -96,6 +96,13 @@ def details_link(item_id: str) -> str | None:
     return f"{config.JELLYFIN_PUBLIC_URL}/web/#/details?id={item_id}" if config.JELLYFIN_PUBLIC_URL else None
 
 
+def theatre_audience(guild: discord.Guild, theatre, bot_id: int) -> list[int]:
+    """Discord ids of the people in the Theatre voice channel, bots left out.
+    Read from voice states, which need no members intent."""
+    return [uid for uid in (theatre.voice_states if theatre else {})
+            if uid != bot_id and not getattr(guild.get_member(uid), "bot", False)]
+
+
 def film_ref(name: str, link: str | None) -> str:
     return f"[{name}]({link})" if link else f"**{name}**"
 
@@ -407,8 +414,7 @@ class MovieNight(commands.Cog):
             await watch_data.update_movie_night(event_id, status="live")
             night["status"] = "live"
 
-        present = [uid for uid in (theatre.voice_states if theatre else {})
-                   if uid != self.bot.user.id and not getattr(guild.get_member(uid), "bot", False)]
+        present = theatre_audience(guild, theatre, self.bot.user.id)
         if present and event.status is discord.EventStatus.scheduled:
             try:   # shows the event as live
                 await event.start(reason="Movie night time")

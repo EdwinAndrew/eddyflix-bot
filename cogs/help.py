@@ -82,7 +82,8 @@ class Help(commands.Cog):
         embed.add_field(
             name="🔧 Owner only",
             value=(
-                "`/jf-debug-sessions [limit]` - Show unclosed watch sessions"
+                "`/jf-debug-sessions [limit]` - Show unclosed watch sessions\n"
+                "`/jf-selftest` - Check the bot end to end, Discord included"
             ),
             inline=False
         )

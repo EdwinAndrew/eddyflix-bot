@@ -182,6 +182,21 @@ class JellyfinClient:
         result = await self._get(endpoint)
         return result.get('Items', []) if isinstance(result, dict) else []
 
+    async def resume_items(self, user_id: str, limit: int = 5) -> List[dict]:
+        """What this user stopped part-way through, most recent first."""
+        result = await self._get(f"/UserItems/Resume?userId={user_id}&Limit={limit}")
+        return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def next_up_items(self, user_id: str, limit: int = 5) -> List[dict]:
+        """The next episode of each show this user is watching."""
+        result = await self._get(f"/Shows/NextUp?userId={user_id}&Limit={limit}&enableResumable=true")
+        return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def get_users(self) -> List[dict]:
+        """Jellyfin's users, as {"Name", "Id", ...}."""
+        result = await self._get("/Users")
+        return result if isinstance(result, list) else []
+
     async def next_up(self, user_id: str, series_id: str) -> dict | None:
         """The episode of a series this user would watch next, half-watched ones
         included, or None when there is none."""
