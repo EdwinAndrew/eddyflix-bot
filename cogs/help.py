@@ -69,7 +69,7 @@ class Help(commands.Cog):
         embed.add_field(
             name="🏆 Achievements & Streaks",
             value=(
-                "`/jf-achievements [user]` - Watch time, streak and finished series\n"
+                "`/jf-achievements [user]` - Watch time, streak, movie nights and finished series\n"
                 "`/jf-link <jellyfin user>` - Connect your Discord to your Jellyfin user\n"
                 "`/jf-achievements-all [limit]` - (Owner) List recent achievements\n"
                 "`/jf-streaks [user]` - Show your watch streak\n"

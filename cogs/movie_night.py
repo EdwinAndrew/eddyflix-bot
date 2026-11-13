@@ -1,4 +1,5 @@
-"""Movie night: themed roles, a role picker in #roles, /movienight and /movievote.
+"""Movie night: themed roles, a role picker in #roles, /movienight and /movievote,
+and following each night through: a reminder, the start, and a recap.
 
 The bot creates the roles and channels below at start-up if they are missing,
 and never deletes anything. The names here are the source of truth: rename a
@@ -14,9 +15,11 @@ from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 import config
+import screenings
+import watch_data
 
 TZ = ZoneInfo("America/Toronto")
 
@@ -91,6 +94,22 @@ def can_host(member: discord.Member) -> bool:
 def details_link(item_id: str) -> str | None:
     """The item's page in Jellyfin's web app, or None without JELLYFIN_PUBLIC_URL."""
     return f"{config.JELLYFIN_PUBLIC_URL}/web/#/details?id={item_id}" if config.JELLYFIN_PUBLIC_URL else None
+
+
+def film_ref(name: str, link: str | None) -> str:
+    return f"[{name}]({link})" if link else f"**{name}**"
+
+
+def syncplay_steps(film: str, host: str | None, theatre: str) -> str:
+    """How to watch together, for the announcement and the reminder. host is the
+    display name of whoever scheduled it, if known."""
+    # Tested 2026-10-22: SyncPlay does not open the film for the others.
+    # Everyone has to be on the same film before playback is synced.
+    group = f"**{host}**'s group" if host else "the group"
+    return (f"1. **Everyone** opens {film} in Jellyfin. SyncPlay won't open it for you\n"
+            f"2. Tap **SyncPlay** (the group icon at the top) and join {group}, or start one if you're first\n"
+            f"3. Once everyone's in, press play: pausing and seeking stay in sync\n"
+            f"4. Hop into {theatre} to talk along")
 
 
 def film_label(item: dict) -> str:
@@ -296,11 +315,150 @@ async def _ensure_guild(bot: discord.Client, guild: discord.Guild):
 # --- slash commands --------------------------------------------------------
 
 class MovieNight(commands.Cog):
-    """/movienight and /movievote. The #roles picker is re-attached in the bot's
-    setup_hook, and the roles and channels are created from on_ready."""
+    """/movienight and /movievote, and the loop that follows each night. The #roles
+    picker is re-attached in the bot's setup_hook, and the roles and channels are
+    created from on_ready."""
 
     def __init__(self, bot):
         self.bot = bot
+        self.empty_since = {}   # event id -> when the Theatre emptied during a live night
+
+    def cog_unload(self):
+        self.follow_nights.cancel()
+
+    @commands.Cog.listener()
+    async def on_services_ready(self):
+        if not self.follow_nights.is_running():
+            self.follow_nights.start()
+
+    # --- following a night: reminder, start, recap ---------------------------
+    # Every minute. The state is in the database, so a restart neither repeats
+    # the reminder or the recap nor loses the minutes counted so far.
+    #
+    # The night runs on the bot's own clock, from its start to its end time,
+    # whatever the Discord event says. Discord ends an active voice event a few
+    # minutes after its channel empties, so the event is started only once
+    # someone is in the Theatre, and an event Discord has ended (or someone
+    # ended by hand) does not end the night: a break would cut the recap short.
+
+    @tasks.loop(minutes=1)
+    async def follow_nights(self):
+        try:
+            await self.adopt_events()
+            nights = await watch_data.open_movie_nights()
+        except Exception as e:
+            print(f"Movie nights: {e}")
+            return
+        for night in nights:
+            try:
+                await self.follow(night)
+            except Exception as e:
+                print(f"Movie night {night['title']}: {e}")
+
+    async def adopt_events(self):
+        """Follow the bot's own events that the database does not know: ones made
+        before this existed. They carry no host or film id."""
+        for guild in self.bot.guilds:
+            for event in guild.scheduled_events:
+                if (event.creator_id == self.bot.user.id and event.name.startswith("🎬 ")
+                        and event.status in (discord.EventStatus.scheduled, discord.EventStatus.active)):
+                    title = event.name.removeprefix("🎬 ")
+                    end = event.end_time or event.start_time + timedelta(hours=3)
+                    await watch_data.add_movie_night(event.id, guild.id, title, title, None, None,
+                                                     event.start_time, end, discord.utils.snowflake_time(event.id))
+
+    async def follow(self, night: dict):
+        guild = self.bot.get_guild(int(night["guild_id"]))
+        if guild is None:
+            return
+        event_id = int(night["event_id"])
+        event = guild.get_scheduled_event(event_id)
+        if event is None:   # not cached: finished while the bot was away, or deleted
+            try:
+                event = await guild.fetch_scheduled_event(event_id, with_counts=False)
+            except discord.NotFound:
+                await self.close_night(night, "gone")
+                return
+        if event.status is discord.EventStatus.cancelled:
+            await self.close_night(night, "cancelled")
+            return
+        live = night["status"] == "live" or event.status is discord.EventStatus.active
+
+        # Someone may have moved the event in Discord
+        start, end = event.start_time, event.end_time or night["end_time"]
+        if (start, end) != (night["start_time"], night["end_time"]):
+            await watch_data.update_movie_night(event_id, start_time=start, end_time=end)
+            night.update(start_time=start, end_time=end)
+        now = discord.utils.utcnow()
+        theatre = event.channel if isinstance(event.channel, discord.VoiceChannel) else self.channels(guild)[1]
+
+        if not live:
+            step = screenings.before_start(now, start, end, night["created_at"], night["reminded"])
+            if step == "remind":
+                await watch_data.update_movie_night(event_id, reminded=1)
+                await self.remind(night, event, guild, theatre)
+            elif step == "missed":
+                await self.close_night(night, "missed")
+            elif step == "start":
+                live = True
+        if not live:
+            return
+        if night["status"] != "live":
+            await watch_data.update_movie_night(event_id, status="live")
+            night["status"] = "live"
+
+        present = [uid for uid in (theatre.voice_states if theatre else {})
+                   if uid != self.bot.user.id and not getattr(guild.get_member(uid), "bot", False)]
+        if present and event.status is discord.EventStatus.scheduled:
+            try:   # shows the event as live
+                await event.start(reason="Movie night time")
+            except discord.HTTPException as e:
+                print(f"Could not start the event for {night['title']}: {e}")
+        if present:
+            self.empty_since.pop(event_id, None)
+        elif await watch_data.theatre_minutes(event_id):
+            self.empty_since.setdefault(event_id, now)
+        if screenings.time_to_end(now, start, end, self.empty_since.get(event_id)):
+            await self.wrap_up(night, event, guild)
+            return
+        await watch_data.add_theatre_minutes(event_id, present)
+
+    async def close_night(self, night: dict, status: str):
+        await watch_data.update_movie_night(night["event_id"], status=status)
+        self.empty_since.pop(int(night["event_id"]), None)
+        print(f"Movie night {night['title']}: {status}")
+
+    async def remind(self, night: dict, event: discord.ScheduledEvent, guild: discord.Guild, theatre):
+        announce = self.channels(guild)[0]
+        if announce is None:
+            return
+        link = details_link(night["item_id"]) if night["item_id"] else None
+        steps = syncplay_steps(film_ref(night["film_name"], link), night["host"],
+                               theatre.mention if theatre else VOICE_CHANNEL)
+        ticket = role(guild, TICKET_ROLE)
+        unix = int(night["start_time"].timestamp())
+        await announce.send(
+            content=f"{ticket.mention if ticket else ''} **{night['title']}** starts <t:{unix}:R>. {event.url}".strip(),
+            embed=screenings.reminder_embed(night["title"], link, steps),
+            allowed_mentions=discord.AllowedMentions(roles=[ticket] if ticket else [], everyone=False, users=False),
+        )
+
+    async def wrap_up(self, night: dict, event: discord.ScheduledEvent, guild: discord.Guild):
+        """End the event if it is still live and post who came. Marked done first,
+        so a restart halfway through cannot post the recap twice."""
+        await self.close_night(night, "done")
+        if event.status is discord.EventStatus.active:
+            try:
+                await event.end(reason="Movie night over")
+            except discord.HTTPException as e:
+                print(f"Could not end the event for {night['title']}: {e}")
+        attended, dropped = screenings.split_attendance(await watch_data.theatre_minutes(night["event_id"]))
+        announce = self.channels(guild)[0]
+        if announce is None or not (attended or dropped):
+            return   # nobody was in the Theatre: nothing to recap
+        counts = [(uid, await watch_data.movie_nights_attended([uid])) for uid in attended]
+        await announce.send(embed=screenings.recap_embed(night["title"], counts, dropped),
+                            allowed_mentions=discord.AllowedMentions.none())
 
 
     async def film_choices(self, term: str):
@@ -358,7 +516,6 @@ class MovieNight(commands.Cog):
         overview = (item.get("Overview") or "").strip()
         genres = ", ".join(item.get("Genres") or []) or "—"
         link = details_link(item["Id"])
-        film_ref = f"[{item.get('Name')}]({link})" if link else f"**{item.get('Name')}**"
         backdrop = await self.bot.jf.get_image(item["Id"], "Backdrop") or await self.bot.jf.get_image(item["Id"], "Primary")
         poster = await self.bot.jf.get_image(item["Id"], "Primary", max_width=600)
 
@@ -375,6 +532,9 @@ class MovieNight(commands.Cog):
             reason=f"/movienight by {interaction.user}",
             **({"image": backdrop} if backdrop else {}),
         )
+        await watch_data.add_movie_night(event.id, guild.id, title, item.get("Name"), item["Id"],
+                                         interaction.user.display_name, event.start_time, event.end_time,
+                                         discord.utils.snowflake_time(event.id))
 
         unix = int(start.timestamp())
         embed = discord.Embed(
@@ -388,14 +548,9 @@ class MovieNight(commands.Cog):
         embed.add_field(name="Genre", value=genres[:100], inline=True)
         embed.add_field(
             name="How to watch together",
-            # Tested 2026-10-22: SyncPlay does not open the film for the others.
-            # Everyone has to be on the same film before playback is synced.
-            value=(f"1. **Everyone** opens {film_ref} in Jellyfin. SyncPlay won't open it for you\n"
-                   f"2. Tap **SyncPlay** (the group icon at the top) and join "
-                   f"**{interaction.user.display_name}**'s group, or start one if you're first\n"
-                   f"3. Once everyone's in, press play: pausing and seeking stay in sync\n"
-                   f"4. Hop into {theatre.mention} to talk along\n"
-                   f"Press **Interested** on the event to get a reminder."),
+            value=syncplay_steps(film_ref(item.get("Name"), link), interaction.user.display_name, theatre.mention)
+            + f"\n{TICKET_ROLE}s get a ping 15 minutes before; press **Interested** on the event "
+            "for Discord's own reminder.",
             inline=False,
         )
         embed.set_footer(text=f"Hosted by {interaction.user.display_name}")

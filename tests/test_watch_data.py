@@ -1,7 +1,7 @@
 """Watch history, streaks and achievements, against a throwaway SQLite database."""
 import asyncio
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import aiosqlite
 import pytest
@@ -226,3 +226,59 @@ def test_summary(db_path):
     assert summary["streak_milestones"] == [7]
     assert summary["streak"] == (7, 7)
     assert [(name, value, total) for name, value, total, _ in summary["series"]] == [("Show", 6, 6)]
+
+
+# --- movie nights -------------------------------------------------------------
+
+NIGHT_START = datetime(2026, 11, 13, 1, 0, tzinfo=timezone.utc)
+
+
+def add_night(event_id, status=None):
+    asyncio.run(watch_data.add_movie_night(event_id, 7, "1917 (2019)", "1917", "abc", "Eddy", NIGHT_START,
+                                           NIGHT_START + timedelta(hours=2), NIGHT_START - timedelta(days=1)))
+    if status:
+        asyncio.run(watch_data.update_movie_night(event_id, status=status))
+
+
+def test_nights_round_trip_and_close(db_path):
+    add_night(1)
+    add_night(1)   # found again in Discord after a restart: left as it is
+    asyncio.run(watch_data.update_movie_night(1, reminded=1, status="live"))
+    [night] = asyncio.run(watch_data.open_movie_nights())
+    assert night["event_id"] == "1" and night["status"] == "live" and night["reminded"] is True
+    assert night["start_time"] == NIGHT_START                  # aware, UTC
+    asyncio.run(watch_data.update_movie_night(1, status="done"))
+    assert asyncio.run(watch_data.open_movie_nights()) == []
+
+
+def test_theatre_minutes_add_up(db_path):
+    add_night(1)
+    for _ in range(3):
+        asyncio.run(watch_data.add_theatre_minutes(1, [10, 11]))
+    asyncio.run(watch_data.add_theatre_minutes(1, [10]))
+    assert asyncio.run(watch_data.theatre_minutes(1)) == {10: 4, 11: 3}
+
+
+def test_attended_counts_finished_nights_with_enough_minutes(db_path):
+    add_night(1, "done")
+    add_night(2, "done")
+    add_night(3, "live")                                        # not over yet
+    asyncio.run(watch_data.add_theatre_minutes(1, [10], minutes=90))
+    asyncio.run(watch_data.add_theatre_minutes(2, [10], minutes=5))    # dropped by
+    asyncio.run(watch_data.add_theatre_minutes(3, [10], minutes=60))
+    assert asyncio.run(watch_data.movie_nights_attended([10])) == 1
+    assert asyncio.run(watch_data.movie_nights_attended([])) == 0
+
+
+def test_summary_counts_movie_nights_per_discord_member(db_path):
+    add_night(1, "done")
+    add_night(2, "done")
+    asyncio.run(watch_data.add_theatre_minutes(1, [10, 20], minutes=90))
+    asyncio.run(watch_data.add_theatre_minutes(2, [20], minutes=90))
+    # Unlinked: counted by Discord id, shown on the caller's own card
+    assert asyncio.run(watch_data.achievement_summary("eddy"))["movie_nights"] == 0
+    assert asyncio.run(watch_data.achievement_summary("eddy", discord_id=10))["movie_nights"] == 1
+    # Once linked, it follows the Jellyfin user, and one night counts once
+    asyncio.run(watch_data.set_link(10, "eddy"))
+    asyncio.run(watch_data.set_link(20, "eddy"))
+    assert asyncio.run(watch_data.achievement_summary("eddy"))["movie_nights"] == 2
