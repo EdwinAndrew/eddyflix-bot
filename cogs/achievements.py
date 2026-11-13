@@ -1,5 +1,6 @@
-"""Achievements and streaks: /jf-achievements, /jf-streaks, the leaderboard, and the
-owner's /jf-achievements-all and /jf-debug-sessions. They are earned in watch_data.py."""
+"""Achievements and streaks: /achievements, /streaks and /link, and the owner's
+/admin achievements and /admin sessions (run from cogs/admin.py). The streak leaderboard
+is on /stats. They are earned in watch_data.py."""
 import os
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -12,7 +13,7 @@ from discord.ext import commands
 import config
 import tiers
 import watch_data
-from checks import is_owner, owner_only
+from checks import is_owner
 
 LOCAL = ZoneInfo(os.getenv("TZ", "America/Toronto"))
 STREAK_BADGES = {7: "7-day", 30: "30-day", 100: "100-day"}
@@ -90,7 +91,7 @@ def achievement_card(user_name: str, summary: dict, linked: bool,
     embed.add_field(name=f"📺 Finished series ({len(series)})", value=text, inline=False)
 
     if not linked:
-        embed.set_footer(text="Shown for your Discord name. Use /jf-link to connect your Jellyfin user.")
+        embed.set_footer(text="Shown for your Discord name. Use /link to connect your Jellyfin user.")
     return embed, badge
 
 
@@ -133,7 +134,7 @@ class Achievements(commands.Cog):
         linked = await watch_data.get_link(interaction.user.id)
         return (linked, True) if linked else (interaction.user.name, False)
 
-    @app_commands.command(name="jf-achievements", description="List achievements for a user (default: your Jellyfin username)")
+    @app_commands.command(name="achievements", description="List achievements for a user (default: your Jellyfin username)")
     async def achievements_command(self, interaction: discord.Interaction, user_name: str = None, limit: int = 20):
         """Show a user's achievements"""
         await interaction.response.defer()
@@ -145,7 +146,7 @@ class Achievements(commands.Cog):
             # card is theirs, linked or not
             summary = await watch_data.achievement_summary(user_name, None if asked_for else interaction.user.id)
             if not (summary["hours"] or summary["series"] or summary["streak"] or summary["movie_nights"]):
-                hint = "" if linked else "\nIs your Jellyfin name different? Link it with `/jf-link`."
+                hint = "" if linked else "\nIs your Jellyfin name different? Link it with `/link`."
                 await interaction.followup.send(f"No watch history for **{user_name}** yet.{hint}")
                 return
             embed, badge = achievement_card(user_name, summary, linked, limit)
@@ -154,7 +155,7 @@ class Achievements(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}")
 
-    @app_commands.command(name="jf-link", description="Connect your Discord account to your Jellyfin user")
+    @app_commands.command(name="link", description="Connect your Discord account to your Jellyfin user")
     @app_commands.describe(jellyfin_user="Your Jellyfin user name",
                            member="(Owner) Link someone else instead")
     async def link_command(self, interaction: discord.Interaction, jellyfin_user: str,
@@ -174,7 +175,7 @@ class Achievements(commands.Cog):
         await watch_data.set_link(target.id, match or jellyfin_user.strip())
         who = "You are" if target.id == interaction.user.id else f"{target.mention} is"
         await interaction.response.send_message(
-            f"{who} now **{match or jellyfin_user.strip()}** on Jellyfin. `/jf-achievements` and `/jf-streaks` "
+            f"{who} now **{match or jellyfin_user.strip()}** on Jellyfin. `/achievements` and `/streaks` "
             "use it by default.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @link_command.autocomplete("jellyfin_user")
@@ -185,9 +186,8 @@ class Achievements(commands.Cog):
             return []
         return [app_commands.Choice(name=n, value=n) for n in names if current.lower() in n.lower()][:25]
 
-    @app_commands.command(name="jf-achievements-all", description="(Owner) List recent achievements across users")
-    @owner_only()
-    async def achievements_all_command(self, interaction: discord.Interaction, limit: int = 50):
+    async def achievements_all(self, interaction: discord.Interaction, limit: int):
+        """Everyone's watch time, best streak and finished series, for /admin achievements"""
         await interaction.response.defer()
 
         try:
@@ -215,7 +215,7 @@ class Achievements(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}")
 
-    @app_commands.command(name="jf-streaks", description="Show your current watch streak")
+    @app_commands.command(name="streaks", description="Show your current watch streak")
     async def streaks_command(self, interaction: discord.Interaction, user_name: str = None):
         """Show user's watch streak"""
         await interaction.response.defer()
@@ -263,47 +263,8 @@ class Achievements(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}")
 
-    @app_commands.command(name="jf-streaks-leaderboard", description="Show watch streak leaderboard")
-    async def streaks_leaderboard_command(self, interaction: discord.Interaction, limit: int = 10):
-        """Show streak leaderboard"""
-        await interaction.response.defer()
-
-        try:
-            async with aiosqlite.connect(config.DB_PATH) as db:
-                async with db.execute("""
-                    SELECT user_name, current_streak, longest_streak, last_watch_date
-                    FROM streaks
-                    ORDER BY current_streak DESC
-                    LIMIT ?
-                """, (limit,)) as cursor:
-                    rows = await cursor.fetchall()
-
-            if not rows:
-                await interaction.followup.send("No streaks found yet.")
-                return
-
-            embed = discord.Embed(
-                title="🔥 Watch Streak Leaderboard",
-                color=discord.Color.orange(),
-                timestamp=datetime.now()
-            )
-
-            for i, (user, current, longest, last) in enumerate(rows, 1):
-                embed.add_field(
-                    name=f"{i}. {user}",
-                    value=f"Current: **{current}** days | Longest: **{longest}** days\nLast: {last}",
-                    inline=False
-                )
-
-            await interaction.followup.send(embed=embed)
-
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error: {e}")
-
-    @app_commands.command(name="jf-debug-sessions", description="(Owner) Show unclosed watch sessions in database")
-    @owner_only()
-    async def debug_sessions_command(self, interaction: discord.Interaction, limit: int = 20):
-        """Debug command to show sessions without end_time"""
+    async def debug_sessions(self, interaction: discord.Interaction, limit: int):
+        """Plays without an end_time, for /admin sessions"""
         await interaction.response.defer()
 
         try:

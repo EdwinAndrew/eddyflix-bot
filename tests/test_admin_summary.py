@@ -15,11 +15,11 @@ from cogs.activity import Activity
 T0 = datetime(2026, 11, 9, 20, 0)
 
 
-def play(user="eddy", device="Chrome", method="DirectPlay", reasons=None, start=0, minutes=30):
+def play(user="eddy", device="Chrome", method="DirectPlay", reasons=None, start=0, minutes=30, kind=None):
     begin = T0 + timedelta(minutes=start)
     end = begin + timedelta(minutes=minutes) if minutes is not None else None
     return {"user": user, "device": device, "play_method": method, "reasons": reasons,
-            "start": begin, "end": end, "seconds": minutes * 60 if minutes is not None else None}
+            "start": begin, "end": end, "seconds": minutes * 60 if minutes is not None else None, "kind": kind}
 
 
 # --- reasons ----------------------------------------------------------------------
@@ -54,10 +54,55 @@ def test_playback_by_device_with_reasons():
     text = summary.playback_section(plays)
     lines = text.split("\n")
     assert lines[0] == "**6 plays**, 3 transcoded (50%) · 1 under 5 minutes"
-    assert lines[1] == "Most transcodes at once: 2 (Mon 9 Nov, 8:10 PM)"
+    assert lines[1] == "Most video transcodes at once: 2 (Mon 9 Nov, 8:10 PM)"
     assert lines[2] == "**Chrome**: 2 of 3 transcoded · subtitles 2, audio codec 1"
     assert lines[3] == "**iPhone**: 1 of 1 transcoded · reason not recorded 1"
     assert lines[4] == "**LG Smart TV**: 0 of 2 transcoded"
+
+
+def test_transcode_kind():
+    info = lambda **kw: {"TranscodingInfo": kw}
+    assert summary.transcode_kind(info(IsVideoDirect=True, IsAudioDirect=False)) == "audio"
+    assert summary.transcode_kind(info(IsVideoDirect=False, IsAudioDirect=True)) == "video"
+    assert summary.transcode_kind(info(IsVideoDirect=False, IsAudioDirect=False)) == "video"
+    assert summary.transcode_kind(info(IsVideoDirect=True, IsAudioDirect=True)) == "remux"
+    assert summary.transcode_kind(info(TranscodeReasons=["ContainerNotSupported"])) is None
+    assert summary.transcode_kind({"TranscodingInfo": None}) is None
+    assert summary.transcode_kind({}) is None
+
+
+def test_heavy_counts_video_and_unknown_only():
+    s = lambda method, **kw: {"PlayState": {"PlayMethod": method}, "TranscodingInfo": kw or None}
+    assert summary.heavy(s("Transcode", IsVideoDirect=False, IsAudioDirect=True))
+    assert summary.heavy(s("Transcode"))                                    # not filled in yet
+    assert not summary.heavy(s("Transcode", IsVideoDirect=True, IsAudioDirect=False))
+    assert not summary.heavy(s("Transcode", IsVideoDirect=True, IsAudioDirect=True))
+    assert not summary.heavy(s("DirectPlay"))
+
+
+def test_alert_line_names_the_kind():
+    session = {"UserName": "eddy", "DeviceName": "Chrome",
+               "TranscodingInfo": {"IsVideoDirect": True, "IsAudioDirect": False,
+                                   "TranscodeReasons": ["AudioCodecNotSupported"]}}
+    assert summary.transcode_alert_lines([session]) == ["• **eddy** on Chrome: audio only, audio codec"]
+
+
+def test_playback_splits_transcodes_by_kind():
+    plays = [
+        play(device="Chrome", method="Transcode", reasons="AudioCodecNotSupported", kind="audio", start=0),
+        play(device="Chrome", method="Transcode", reasons="AudioCodecNotSupported", kind="audio", start=5),
+        play(device="Chrome", method="Transcode", reasons="VideoCodecNotSupported", kind="video", start=100),
+        play(device="iPhone", method="Transcode", reasons="ContainerNotSupported", kind="remux", start=0),
+        play(device="iPhone", method="Transcode", reasons=None, start=300),   # from before kinds were kept
+    ]
+    lines = summary.playback_section(plays).split("\n")
+    assert lines[1] == ("Of those: 1 full video, 2 audio only, 1 repackaged, 1 not recorded. "
+                        "Only full video re-encodes the picture")
+    # The two audio-only plays overlap but don't load the server; no peak line
+    assert not any(l.startswith("Most video transcodes") for l in lines)
+    assert lines[2] == "**Chrome**: 3 of 3 transcoded (1 full video, 2 audio only) · audio codec 2, video codec 1"
+    assert lines[3] == ("**iPhone**: 2 of 2 transcoded (1 repackaged, 1 not recorded) · "
+                        "container 1, reason not recorded 1")
 
 
 def test_playback_when_nothing_played():
@@ -84,7 +129,7 @@ def test_library_section():
 def test_people_section():
     plays = [play(user="eddy", minutes=120), play(user="Sarah", minutes=30), play(user="eddy", minutes=None)]
     text = summary.people_section(plays, ["Aldrin", "eddy", "Julie", "Sarah"], {"EDDY", "Sarah"})
-    assert text == "**Active (2):** eddy 2.0h, Sarah 0.5h\n**Not linked with /jf-link (2):** Aldrin, Julie"
+    assert text == "**Active (2):** eddy 2.0h, Sarah 0.5h\n**Not linked with /link (2):** Aldrin, Julie"
     assert "Jellyfin did not answer" in summary.people_section([], None, set())
 
 
@@ -115,7 +160,7 @@ def test_health_section():
         "Jellyfin 12.4.0 · restart pending",
         "Disk (Shows, Movies): 12.3 TB free of 14.7 TB",
         "Disk (Collections, Jellyfin data, transcodes): 4.0 GB free of 50.0 GB ⚠️",
-        "71 plays never closed in the database (/jf-debug-sessions)",
+        "71 plays never closed in the database (/admin sessions)",
     ]
     assert "Jellyfin did not answer just now" in summary.health_section({}, T0)
 
@@ -162,7 +207,8 @@ def test_the_reasons_column_is_added_to_an_old_database(db_path):
     asyncio.run(watch_data.init_database())
     asyncio.run(watch_data.init_database())          # and running it again is fine
     with sqlite3.connect(db_path) as db:
-        assert db.execute("SELECT user_name, transcode_reasons FROM watch_history").fetchall() == [("eddy", None)]
+        assert db.execute("SELECT user_name, transcode_reasons, transcode_kind FROM watch_history").fetchall() == \
+            [("eddy", None, None)]
 
 
 def test_plays_since_reads_reasons(db_path):
@@ -233,6 +279,31 @@ def test_reasons_are_recorded_with_the_play(cog, db_path):
             [("Transcode", "SubtitleCodecNotSupported")]
 
 
+def test_the_kind_is_recorded_when_it_shows_up(cog, db_path):
+    poll, _ = cog
+    poll()
+    poll(transcoding("a", "eddy", "f1", reasons=("AudioCodecNotSupported",)))     # no kind yet
+    later = transcoding("a", "eddy", "f1", reasons=("AudioCodecNotSupported",))
+    later["TranscodingInfo"].update(IsVideoDirect=True, IsAudioDirect=False)
+    poll(later)
+    poll(later)
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT transcode_reasons, transcode_kind FROM watch_history").fetchall() == \
+            [("AudioCodecNotSupported", "audio")]
+
+
+def test_audio_only_streams_dont_warn(cog, monkeypatch):
+    poll, channels = cog
+    monkeypatch.setattr(config, "ADMIN_CHANNEL_ID", 2)
+    three = [transcoding(s, u, f, reasons=("AudioCodecNotSupported",))
+             for s, u, f in (("a", "eddy", "f1"), ("b", "Sarah", "f2"), ("c", "Kevin", "f3"))]
+    for t in three:
+        t["TranscodingInfo"].update(IsVideoDirect=True, IsAudioDirect=False)
+    poll()
+    poll(*three)
+    assert channels[2].sent == []
+
+
 def test_the_warning_goes_to_the_admin_channel_once(cog, monkeypatch):
     poll, channels = cog
     monkeypatch.setattr(config, "ADMIN_CHANNEL_ID", 2)
@@ -294,7 +365,7 @@ def test_the_admin_cog_puts_it_together(db_path):
     fields = {f.name: f.value for f in embed.fields}
     assert fields["▶️ Playback"] == "Nothing played this week."
     assert fields["📚 Library"] == "**1 film:** The Odyssey (2026)\n**1 episode** of 1 show: Fallout 1"
-    assert "**Not linked with /jf-link (2):** eddy, Kevin" in fields["👥 People"]
+    assert "**Not linked with /link (2):** eddy, Kevin" in fields["👥 People"]
     assert "Jellyfin 12.4.0" in fields["🩺 Health"]
 
     bot.jf = SummaryJellyfin(fail=True)

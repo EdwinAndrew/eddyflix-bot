@@ -69,7 +69,7 @@ def test_card_without_link_or_progress(monkeypatch):
     embed = watch_card(SHOW, None)
     assert embed.url is None
     assert "Where you left off" not in {f.name for f in embed.fields}
-    assert "/jf-link" in embed.footer.text
+    assert "/link" in embed.footer.text
 
 
 def test_year_is_not_doubled():

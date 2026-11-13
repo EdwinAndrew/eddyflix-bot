@@ -1,4 +1,4 @@
-"""The /jf-achievements card."""
+"""The /achievements card."""
 from cogs.achievements import achievement_card, earned_unix
 
 SUMMARY = {
@@ -37,7 +37,7 @@ def test_current_tier_badge_in_the_corner():
 
 def test_footer_only_when_not_linked():
     assert card(SUMMARY).footer.text is None
-    assert "/jf-link" in card(SUMMARY, linked=False).footer.text
+    assert "/link" in card(SUMMARY, linked=False).footer.text
 
 
 def test_empty_parts():

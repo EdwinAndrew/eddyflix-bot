@@ -182,6 +182,18 @@ class JellyfinClient:
         result = await self._get(endpoint)
         return result.get('Items', []) if isinstance(result, dict) else []
 
+    async def newest_episodes(self, series_id: str, limit: int | None = 10) -> List[dict]:
+        """A series' episodes, highest season and number first, for the catch-up
+        offer (catch_up.py). limit=None lists them all."""
+        # ParentId, not SeriesId: Jellyfin 12 ignores SeriesId on /Items.
+        endpoint = (f"/Items?ParentId={series_id}&IncludeItemTypes=Episode&Recursive=true&IsMissing=false"
+                    f"&SortBy=ParentIndexNumber,IndexNumber&SortOrder=Descending"
+                    f"&EnableImages=false&EnableUserData=false")
+        if limit:
+            endpoint += f"&Limit={limit}"
+        result = await self._get(endpoint)
+        return result.get('Items', []) if isinstance(result, dict) else []
+
     async def resume_items(self, user_id: str, limit: int = 5) -> List[dict]:
         """What this user stopped part-way through, most recent first."""
         result = await self._get(f"/UserItems/Resume?userId={user_id}&Limit={limit}")
@@ -225,6 +237,24 @@ class JellyfinClient:
                                  f"&Limit=1&enableResumable=true")
         items = result.get('Items', []) if isinstance(result, dict) else []
         return items[0] if items else None
+
+    async def series_episodes(self, series_id: str) -> List[dict]:
+        """A series' episodes in order, with no user data or images: what "3 episodes
+        ahead of you" is counted along."""
+        # ParentId, not SeriesId, which /Items ignores
+        result = await self._get(
+            f"/Items?ParentId={series_id}&IncludeItemTypes=Episode&Recursive=true&IsMissing=false"
+            f"&SortBy=ParentIndexNumber,IndexNumber&EnableImages=false&EnableUserData=false")
+        return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def user_items(self, item_ids: List[str], user_id: str) -> List[dict]:
+        """Several items in one call, with this user's UserData and episode counts."""
+        if not item_ids:
+            return []
+        result = await self._get(
+            f"/Items?Ids={','.join(item_ids)}&userId={user_id}&Fields=RecursiveItemCount"
+            f"&EnableImages=false")
+        return result.get('Items', []) if isinstance(result, dict) else []
 
     async def random_movies(self, count: int) -> List[dict]:
         result = await self._get(
@@ -286,7 +316,7 @@ class JellyfinClient:
         return None
 
     async def get_user_names(self) -> List[str]:
-        """Jellyfin's user names, for /jf-link."""
+        """Jellyfin's user names, for /link."""
         result = await self._get("/Users")
         return sorted((u.get('Name') for u in result if u.get('Name')), key=str.lower) if isinstance(result, list) else []
 

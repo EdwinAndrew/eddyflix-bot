@@ -98,6 +98,13 @@ def can_host(member: discord.Member) -> bool:
     return member.guild_permissions.manage_events or any(r.name in (DIRECTOR_ROLE, USHER_ROLE) for r in member.roles)
 
 
+def staff_only():
+    """Hides a staff command (/movienight, /movievote, /spoiler, /unspoiler) from members:
+    Discord lists it only for people with Timeout Members, which both staff roles have and
+    members don't. Visibility only: each command still checks can_host."""
+    return app_commands.default_permissions(moderate_members=True)
+
+
 def details_link(item_id: str) -> str | None:
     """The item's page in Jellyfin's web app, or None without JELLYFIN_PUBLIC_URL."""
     return f"{config.JELLYFIN_PUBLIC_URL}/web/#/details?id={item_id}" if config.JELLYFIN_PUBLIC_URL else None
@@ -279,7 +286,7 @@ async def set_flairs(interaction: discord.Interaction, chosen: list[Flair], lock
 
 
 # --- linking a Jellyfin user from #roles -------------------------------------
-# The same as /jf-link, for people who don't know the command. The button is on
+# The same as /link, for people who don't know the command. The button is on
 # the picker, so it survives restarts with it; the menu it answers with is made
 # fresh each time, so it always lists who is still free.
 
@@ -304,12 +311,12 @@ def link_prompt(mine: str | None, free: list[str], more: bool) -> str:
         text = ("Every Jellyfin user is linked to someone already. If yours is taken, ask the server owner. "
                 f"No account yet? Ask the server owner or a **{DIRECTOR_ROLE}**.")
     if more:
-        text += "\nNot in the list? Use `/jf-link` with your Jellyfin user name."
+        text += "\nNot in the list? Use `/link` with your Jellyfin user name."
     return text
 
 
 def linked_message(name: str) -> str:
-    return (f"You're now **{name}** on Jellyfin. `/watch` shows where you left off, `/jf-achievements` "
+    return (f"You're now **{name}** on Jellyfin. `/watch` shows where you left off, `/achievements` "
             "shows your card, and movie nights count towards it.")
 
 
@@ -343,7 +350,7 @@ async def offer_link(interaction: discord.Interaction):
     except Exception:
         names = []
     if not names:
-        await interaction.followup.send("I can't reach Jellyfin right now. Try again later, or use `/jf-link`.",
+        await interaction.followup.send("I can't reach Jellyfin right now. Try again later, or use `/link`.",
                                         ephemeral=True)
         return
     mine = await watch_data.get_link(interaction.user.id)
@@ -385,12 +392,12 @@ def guide_embed(owner_id: int | None = None) -> discord.Embed:
         f"{who} from Canada. Abroad, or on a VPN that comes out somewhere else, {it} won't load."))
     embed.add_field(name="Then, here on Discord", inline=False, value=(
         f"👤 **{LINK_LABEL}** on the flair picker in this channel tells the bot who you are on "
-        "Jellyfin (or use `/jf-link`). `/watch` progress, achievements, new-episode DMs and "
+        "Jellyfin (or use `/link`). `/watch` progress, achievements, new-episode DMs and "
         "movie night attendance all need it\n"
         f"🎟️ **Ping me for movie nights** gets you a ticket, so you hear when one is on\n"
-        "Worth knowing: `/watch` finds something and where you left off · `/jf-subscribe` DMs you "
-        "new episodes of a show · `/jf-achievements` shows your watch time and badges · "
-        "`/jf-help` lists the rest"))
+        "Worth knowing: `/watch` finds something and where you left off · `/subscribe` DMs you "
+        "new episodes of a show · `/achievements` shows your watch time and badges · "
+        "`/help` lists the rest"))
     return embed
 
 
@@ -654,6 +661,7 @@ class MovieNight(commands.Cog):
 
     @app_commands.command(name="movienight", description="Schedule a movie night: makes an event and pings Ticket Holders")
     @app_commands.guild_only()
+    @staff_only()
     @app_commands.describe(film="A film from the Jellyfin library",
                            day="Tonight, tomorrow, a weekday, or a date like 2026-10-31",
                            time="Start time, e.g. 8pm or 20:00 (a bare 8 means 8pm)")
@@ -752,6 +760,7 @@ class MovieNight(commands.Cog):
 
     @app_commands.command(name="movievote", description="Post a poll of films for the next movie night")
     @app_commands.guild_only()
+    @staff_only()
     @app_commands.describe(film1="A film (leave the films empty for a random pick)",
                            film2="Another film", film3="Another film", film4="Another film",
                            hours="How long the vote stays open (default 24)")

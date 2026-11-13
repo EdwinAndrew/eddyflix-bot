@@ -1,4 +1,4 @@
-"""/jf-selftest: the owner's one-command check that the bot works, Discord included.
+"""/admin selftest: the owner's one-command check that the bot works, Discord included.
 
 It runs the live Jellyfin and database checks from selftest.py, then the parts
 only Discord can answer: the bot can DM (it sends the owner samples of the
@@ -11,14 +11,12 @@ import io
 from datetime import timedelta
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 import config
 import screenings
 import selftest
 import watch_data
-from checks import owner_only
 from cogs.movie_night import (ANNOUNCE_CHANNEL, TICKET_ROLE, VOICE_CHANNEL, role, syncplay_steps,
                               theatre_audience)
 from cogs.subscriptions import notification_embed
@@ -38,19 +36,19 @@ async def event_round_trip(guild, theatre, now) -> selftest.Check:
         event = await guild.create_scheduled_event(
             name=TEST_EVENT, start_time=now + timedelta(minutes=10), entity_type=discord.EntityType.voice,
             channel=theatre, privacy_level=discord.PrivacyLevel.guild_only,
-            description="Made by /jf-selftest and deleted straight away.", reason="/jf-selftest")
+            description="Made by /admin selftest and deleted straight away.", reason="/admin selftest")
         steps.append("created")
         # start() and end() return the updated event and leave the old object as it
         # was: ending the old one raises ValueError "This scheduled event is not active"
-        event = await event.start(reason="/jf-selftest")
+        event = await event.start(reason="/admin selftest")
         steps.append("started")
-        event = await event.end(reason="/jf-selftest")
+        event = await event.end(reason="/admin selftest")
         steps.append("ended")
     except Exception as e:   # anything: the event must still be deleted below
         error = e
     if event is not None:
         try:
-            await event.delete(reason="/jf-selftest")
+            await event.delete(reason="/admin selftest")
             steps.append("deleted")
         except discord.NotFound:
             steps.append("deleted")
@@ -128,10 +126,8 @@ class SelfTest(commands.Cog):
             return selftest.Check("DMs, with a poster attached", False,
                                   f"{e.text or e} (subscribers with closed DMs get the activity-channel fallback)")
 
-    @app_commands.command(name="jf-selftest", description="(Owner) Check the bot end to end, Discord included")
-    @app_commands.guild_only()
-    @owner_only()
-    async def selftest_command(self, interaction: discord.Interaction):
+    async def run(self, interaction: discord.Interaction):
+        """/admin selftest"""
         await interaction.response.defer(ephemeral=True, thinking=True)
         guild, me = interaction.guild, interaction.guild.me
         theatre = discord.utils.get(guild.voice_channels, name=VOICE_CHANNEL)
@@ -162,7 +158,7 @@ class SelfTest(commands.Cog):
         checks.append(await self.dm_samples(interaction.user, findings, guild, theatre))
 
         failed = [c for c in checks if c.ok is False]
-        print(f"/jf-selftest by {interaction.user}: {len(failed)} failed"
+        print(f"/admin selftest by {interaction.user}: {len(failed)} failed"
               + "".join(f"\n  {c.line}" for c in failed))
         await interaction.followup.send(embed=report(checks), ephemeral=True)
 

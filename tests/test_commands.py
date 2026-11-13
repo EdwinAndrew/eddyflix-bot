@@ -3,18 +3,20 @@ fail here first, not in Discord."""
 import asyncio
 from types import SimpleNamespace
 
+import discord
+
 import checks
 from bot import EddyFlixBot
 
-EXPECTED = {
-    "jf-achievements", "jf-achievements-all", "jf-admin-summary", "jf-debug-sessions", "jf-health",
-    "jf-help", "jf-link", "jf-popular", "jf-recent", "jf-selftest", "jf-stats", "jf-stats-graph",
-    "jf-status", "jf-streaks", "jf-streaks-leaderboard", "jf-subscribe", "jf-subscriptions", "jf-unsubscribe",
-    "jf-weekly-digest", "jf-weekly-new", "movienight", "movienight-history", "movievote", "request", "spoiler",
-    "unspoiler", "watch", "pick", "continue",
+# What a regular member sees: no default permissions, no checks
+MEMBER = {
+    "watch", "pick", "continue", "request", "stats", "achievements", "streaks", "link",
+    "subscribe", "unsubscribe", "subscriptions", "movienight-history", "help",
 }
-OWNER_ONLY = {"jf-achievements-all", "jf-admin-summary", "jf-debug-sessions", "jf-selftest",
-              "jf-weekly-digest", "jf-weekly-new"}
+# Directors and Ushers: listed only for Timeout Members, checked with can_host in the command
+STAFF = {"movienight", "movievote", "spoiler", "unspoiler"}
+# The owner's, all under /admin
+ADMIN = {"summary", "weekly-digest", "weekly-new", "selftest", "health", "sessions", "achievements"}
 
 
 def loaded_tree():
@@ -26,14 +28,35 @@ def loaded_tree():
 
 
 def test_all_commands_are_registered():
-    assert {c.name for c in loaded_tree()} == EXPECTED
+    tree = {c.name: c for c in loaded_tree()}
+    assert set(tree) == MEMBER | STAFF | {"admin"}
+    assert {c.name for c in tree["admin"].commands} == ADMIN
 
 
-def test_owner_only_commands_are_hidden_and_checked():
+def test_no_old_names():
+    assert not [c.name for c in loaded_tree() if c.name.startswith("jf-")]
+
+
+def test_members_see_only_their_commands():
     for command in loaded_tree():
-        hidden = bool(command.default_permissions and command.default_permissions.administrator)
-        assert hidden == (command.name in OWNER_ONLY), command.name
-        assert bool(command.checks) == (command.name in OWNER_ONLY), command.name
+        if command.name in MEMBER:
+            assert command.default_permissions is None, command.name
+            assert not command.checks, command.name
+
+
+def test_staff_commands_are_hidden_from_members():
+    for command in loaded_tree():
+        if command.name in STAFF:
+            assert command.default_permissions == discord.Permissions(moderate_members=True), command.name
+            assert command.guild_only, command.name
+
+
+def test_admin_group_is_hidden_and_every_command_checked():
+    admin = next(c for c in loaded_tree() if c.name == "admin")
+    assert admin.default_permissions == discord.Permissions(administrator=True)
+    assert admin.guild_only
+    for command in admin.commands:
+        assert checks.is_owner in command.checks, command.name
 
 
 def interaction(user_id, owner_id=100, app_owner=False):

@@ -1,7 +1,9 @@
 """The activity feed, polled every 30 seconds: one post per viewing (viewings.py),
 one per watch party (parties.py), and a warning when too much is transcoding.
 
-Also where watch history gets recorded, since that follows the same sessions.
+Also where watch history gets recorded, since that follows the same sessions,
+and where the end of a play is noticed for the catch-up subscription offer
+(catch_up.py).
 """
 import io
 from datetime import datetime
@@ -26,7 +28,7 @@ class Activity(commands.Cog):
         self.sessions_seeded = False   # set after the first session poll; see check_sessions
         self.parties = {}              # item id -> the watch party on it; see update_parties
         self.feed = viewings.Feed()     # one post per viewing; see viewings.py
-        self.reasons_recorded = set()  # (session, item) whose transcode reasons are saved
+        self.reasons_recorded = {}  # (session, item) -> the (reasons, kind) last saved for it
         self.transcode_warned = False
         self.now = datetime.now         # replaced in the tests
 
@@ -113,12 +115,22 @@ class Activity(commands.Cog):
             for session in sessions:
                 await self.record(session)
 
+            if not self.sessions_seeded:
+                # Plays left open while the bot was down: close them once, now
+                # that this poll has picked up the ones still playing
+                live = {(s['Id'], s['NowPlayingItem']['Id']) for s in sessions if s.get('NowPlayingItem')}
+                closed, deleted = await watch_data.close_orphans(self.bot.jf, live, self.now())
+                if closed or deleted:
+                    print(f"Closed {closed} plays left open, deleted {deleted} duplicates")
+
             for sess_id in set(self.active_sessions) - current_session_ids:
                 # Record the end of anything still playing when the session went away
-                prev_item = self.active_sessions.pop(sess_id).get('NowPlayingItem')
+                prev_session = self.active_sessions.pop(sess_id)
+                prev_item = prev_session.get('NowPlayingItem')
                 if prev_item:
                     await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item.get('Id'))
-            self.reasons_recorded = {k for k in self.reasons_recorded if k[0] in current_session_ids}
+                    await self.play_ended(prev_session)
+            self.reasons_recorded = {k: v for k, v in self.reasons_recorded.items() if k[0] in current_session_ids}
 
             # Connections are not posted: Jellyfin opens a session whenever
             # someone opens an app, and keeps idle ones for hours (#13).
@@ -157,20 +169,39 @@ class Activity(commands.Cog):
         elif now_playing and now_item_id != prev_item_id:
             if prev_item_id:
                 await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item_id)
+                await self.play_ended(self.active_sessions[sess_id])
             await watch_data.record_watch_start(sess_id, session)
         elif prev_playing and not now_playing:
             await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item_id)
+            await self.play_ended(self.active_sessions[sess_id])
 
         reasons = admin_summary.transcode_reasons(session)
-        if now_playing and reasons and (sess_id, now_item_id) not in self.reasons_recorded:
-            play_method = (session.get('PlayState') or {}).get('PlayMethod')
-            await watch_data.record_transcode(sess_id, now_item_id, play_method, reasons)
-            self.reasons_recorded.add((sess_id, now_item_id))
+        kind = admin_summary.transcode_kind(session)
         if not now_playing or now_item_id != prev_item_id:
-            self.reasons_recorded = {k for k in self.reasons_recorded
+            self.reasons_recorded = {k: v for k, v in self.reasons_recorded.items()
                                      if k[0] != sess_id or k[1] == now_item_id}
+        # Saved again when it changes: the kind can show up a poll after the
+        # reasons, and a player can fall back from audio-only to full video
+        seen = (tuple(reasons), kind)
+        if now_playing and (reasons or kind) and self.reasons_recorded.get((sess_id, now_item_id)) != seen:
+            play_method = (session.get('PlayState') or {}).get('PlayMethod')
+            await watch_data.record_transcode(sess_id, now_item_id, play_method, reasons, kind)
+            self.reasons_recorded[(sess_id, now_item_id)] = seen
 
         self.active_sessions[sess_id] = session
+
+    async def play_ended(self, last_seen: dict):
+        """A play ended; last_seen is its session at the last poll, with how far
+        in it was. Someone who just caught up on a show may get offered
+        new-episode DMs (cogs/subscriptions.py). Never stops the poll."""
+        get_cog = getattr(self.bot, "get_cog", None)
+        subscriptions = get_cog("Subscriptions") if get_cog else None
+        if subscriptions is None:
+            return
+        try:
+            await subscriptions.offer_if_caught_up(last_seen)
+        except Exception as e:
+            print(f"Could not check for a catch-up offer: {e}")
 
     async def post_viewing(self, viewing, channel, now: datetime):
         """Send a viewing's post the first time, edit it after that."""
@@ -190,10 +221,11 @@ class Activity(commands.Cog):
             print(f"Could not post a viewing: {e}")
 
     async def check_transcodes(self, sessions, activity_channel):
-        """Warn once when TRANSCODE_WARNING streams are transcoding at the same
-        time, and again only after it has dropped below. In the admin channel
-        when there is one (#51)."""
-        transcoding = [s for s in sessions if (s.get('PlayState') or {}).get('PlayMethod') == 'Transcode']
+        """Warn once when TRANSCODE_WARNING streams are re-encoding video at the
+        same time, and again only after it has dropped below. Audio-only and
+        repackaged streams copy the picture and cost little, so they don't count.
+        In the admin channel when there is one (#51)."""
+        transcoding = [s for s in sessions if admin_summary.heavy(s)]
         if len(transcoding) < TRANSCODE_WARNING:
             self.transcode_warned = False
             return
@@ -204,7 +236,7 @@ class Activity(commands.Cog):
             or activity_channel
         embed = discord.Embed(
             title="⚠️ High Transcode Load",
-            description=f"**{len(transcoding)} streams** are being transcoded at once",
+            description=f"**{len(transcoding)} streams** are re-encoding video at once",
             color=discord.Color.orange(),
             timestamp=datetime.now()
         )

@@ -1,6 +1,6 @@
 """The watch-history database: tables, recording plays, streaks and achievements."""
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import aiosqlite
 
@@ -40,8 +40,13 @@ async def init_database():
         # Why Jellyfin transcoded a play, e.g. "SubtitleCodecNotSupported,AudioCodecNotSupported",
         # for the admin summary (#51). Plays from before 2026-11 have none.
         async with db.execute("PRAGMA table_info(watch_history)") as cursor:
-            if 'transcode_reasons' not in [c[1] for c in await cursor.fetchall()]:
-                await db.execute("ALTER TABLE watch_history ADD COLUMN transcode_reasons TEXT")
+            columns = [c[1] for c in await cursor.fetchall()]
+        if 'transcode_reasons' not in columns:
+            await db.execute("ALTER TABLE watch_history ADD COLUMN transcode_reasons TEXT")
+        # What the transcode did: 'video', 'audio' (only the sound converted) or
+        # 'remux' (both copied). Plays from before 2026-11-13 have none.
+        if 'transcode_kind' not in columns:
+            await db.execute("ALTER TABLE watch_history ADD COLUMN transcode_kind TEXT")
 
         # Subscriptions table
         await db.execute("""
@@ -115,7 +120,7 @@ async def init_database():
             if 'item_total' not in [c[1] for c in await cursor.fetchall()]:
                 await db.execute("ALTER TABLE achievements ADD COLUMN item_total INTEGER")
 
-        # Which Jellyfin user a Discord member is, set with /jf-link
+        # Which Jellyfin user a Discord member is, set with /link
         await db.execute("""
             CREATE TABLE IF NOT EXISTS user_links (
                 discord_user_id TEXT PRIMARY KEY,
@@ -219,6 +224,19 @@ async def init_database():
             )
         """)
 
+        # The 🔔 "tell me when new episodes land" offer, made once per member per
+        # show when they catch up on it (catch_up.py). A row means it was offered,
+        # whatever they did with it, so it is never offered again
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS subscription_offers (
+                discord_user_id TEXT NOT NULL,
+                series_id TEXT NOT NULL,
+                series_name TEXT NOT NULL,
+                offered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (discord_user_id, series_id)
+            )
+        """)
+
         await db.commit()
         print("Database initialized successfully")
 
@@ -250,17 +268,20 @@ async def record_watch_start(session_id: str, session: dict):
               season_number, episode_number, datetime.now(), play_method, device_name))
         await db.commit()
 
-async def record_transcode(session_id: str, item_id: str, play_method: str | None, reasons: list[str]):
-    """Note why the open play of this item is transcoded. Jellyfin fills in
+async def record_transcode(session_id: str, item_id: str, play_method: str | None, reasons: list[str],
+                           kind: str | None = None):
+    """Note why the open play of this item is transcoded, and what kind of
+    transcode it is (admin_summary.transcode_kind). Jellyfin fills in
     TranscodingInfo a poll or two after playback starts, and a player can fall
     back to transcoding part way, so this comes after record_watch_start."""
     async with aiosqlite.connect(config.DB_PATH) as db:
         await db.execute("""
-            UPDATE watch_history SET transcode_reasons = ?, play_method = COALESCE(?, play_method)
+            UPDATE watch_history SET transcode_reasons = ?, play_method = COALESCE(?, play_method),
+                   transcode_kind = COALESCE(?, transcode_kind)
             WHERE id = (SELECT id FROM watch_history
                         WHERE session_id = ? AND item_id = ? AND end_time IS NULL
                         ORDER BY start_time DESC LIMIT 1)
-        """, (",".join(reasons), play_method, session_id, item_id))
+        """, (",".join(reasons), play_method, kind, session_id, item_id))
         await db.commit()
 
 
@@ -305,6 +326,73 @@ async def record_watch_end(jf, session_id: str, item_id: str):
                 await update_streak(user_name, db)
 
                 await db.commit()
+
+async def close_orphans(jf, live: set[tuple[str, str]], now: datetime | None = None) -> tuple[int, int]:
+    """Close plays whose stop the bot never saw: it was down, or (on the old PC)
+    the machine went to sleep mid-show. Run once at start-up, after the first
+    poll; live is the (session id, item id) pairs Jellyfin lists as playing now,
+    which carry on as they are.
+
+    A play followed by another of the same item in the same session is a
+    duplicate (an old bug opened one every poll) and is deleted. Any other is
+    closed at its best guess: the start plus the item's length, but no later than
+    the same person's next play, or now. When Jellyfin no longer knows the item's
+    length (deleted or replaced since) it is closed with no time, so it adds
+    nothing: the gap to the next play can be days. Returns (closed, deleted)."""
+    now = now or datetime.now()
+    runtimes: dict[str, int | None] = {}
+    closed = deleted = 0
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("""
+            SELECT id, session_id, item_id, user_name, start_time FROM watch_history
+            WHERE end_time IS NULL ORDER BY start_time
+        """) as cursor:
+            rows = await cursor.fetchall()
+        for entry_id, session_id, item_id, user_name, start_time in rows:
+            if (session_id, item_id) in live:
+                continue
+            async with db.execute("""
+                SELECT 1 FROM watch_history
+                WHERE session_id = ? AND item_id = ? AND start_time > ? LIMIT 1
+            """, (session_id, item_id, start_time)) as cursor:
+                if await cursor.fetchone():
+                    await db.execute("DELETE FROM watch_history WHERE id = ?", (entry_id,))
+                    deleted += 1
+                    continue
+
+            start = datetime.fromisoformat(start_time)
+            bounds = [now]
+            async with db.execute("""
+                SELECT MIN(start_time) FROM watch_history WHERE user_name = ? AND start_time > ?
+            """, (user_name, start_time)) as cursor:
+                nxt = (await cursor.fetchone())[0]
+            if nxt:
+                bounds.append(datetime.fromisoformat(nxt))
+            if item_id not in runtimes:
+                try:
+                    ticks = (await jf.get_item(item_id) or {}).get('RunTimeTicks') if jf else None
+                except Exception:
+                    ticks = None
+                runtimes[item_id] = int(ticks // 10_000_000) if ticks else None
+            # No length known: count nothing rather than guess
+            bounds.append(start + timedelta(seconds=runtimes[item_id] or 0))
+            end = max(start, min(bounds))
+            duration = int((end - start).total_seconds())
+            await db.execute("UPDATE watch_history SET end_time = ?, duration_seconds = ? WHERE id = ?",
+                             (end, duration, entry_id))
+            await db.execute("""
+                INSERT INTO popular_content (item_id, item_name, item_type, series_name, total_watch_time, watch_count, last_watched)
+                SELECT item_id, item_name, item_type, series_name, ?, 1, ?
+                FROM watch_history WHERE id = ?
+                ON CONFLICT(item_id) DO UPDATE SET
+                    total_watch_time = total_watch_time + ?,
+                    watch_count = watch_count + 1,
+                    last_watched = MAX(last_watched, ?)
+            """, (duration, end, entry_id, duration, end))
+            closed += 1
+        await db.commit()
+    return closed, deleted
+
 
 async def update_streak(user_name: str, db, today=None):
     """Update user's watch streak and check for milestone achievements.
@@ -512,6 +600,14 @@ async def set_link(discord_user_id: int, jellyfin_user: str):
                                                        linked_at = CURRENT_TIMESTAMP
         """, (str(discord_user_id), jellyfin_user))
         await db.commit()
+
+
+async def all_links() -> list[tuple[int, str]]:
+    """Every /link as (Discord id, Jellyfin user name), oldest link first."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("SELECT discord_user_id, jellyfin_user FROM user_links "
+                              "ORDER BY linked_at, discord_user_id") as cur:
+            return [(int(row[0]), row[1]) for row in await cur.fetchall()]
 
 
 async def linked_jellyfin_users() -> set[str]:

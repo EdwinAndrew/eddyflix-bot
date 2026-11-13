@@ -11,7 +11,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 import watch_data
-from cogs.movie_night import CHAT_CHANNEL, DIRECTOR_ROLE, SPOILER_FLAIR, USHER_ROLE, can_host, role
+from cogs.movie_night import CHAT_CHANNEL, DIRECTOR_ROLE, SPOILER_FLAIR, USHER_ROLE, can_host, role, staff_only
 
 DEFAULT_HOURS = 24
 MAX_HOURS = 168   # a week
@@ -93,6 +93,7 @@ class Spoiler(commands.Cog):
 
     @app_commands.command(name="spoiler", description="Give someone the Spoiler Alert flair for a while")
     @app_commands.guild_only()
+    @staff_only()
     @app_commands.describe(member="Who spoiled it",
                            hours=f"How long (default {DEFAULT_HOURS}). Again on someone who has it: starts over from now")
     async def spoiler(self, interaction: discord.Interaction, member: discord.Member,
@@ -130,6 +131,7 @@ class Spoiler(commands.Cog):
 
     @app_commands.command(name="unspoiler", description="Take Spoiler Alert off someone before their time is up")
     @app_commands.guild_only()
+    @staff_only()
     @app_commands.describe(member="Who to let off")
     async def unspoiler(self, interaction: discord.Interaction, member: discord.Member):
         guild = interaction.guild

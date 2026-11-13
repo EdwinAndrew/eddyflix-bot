@@ -178,3 +178,32 @@ def test_render_grid_draws_posters_and_placeholders():
     many = [entry("film", str(n)) for n in range(15)]
     assert Image.open(io.BytesIO(nw.render_grid(many, {}, datetime(2026, 11, 8), datetime(2026, 11, 15)))).size \
         == nw.grid_layout(12)[:2]
+
+
+# --- the request line ----------------------------------------------------------------
+
+def test_request_line_only_says_what_is_set_up():
+    assert nw.request_line(True, "https://seerr.example") == \
+        "🙋 Missing something? Ask for it with `/request`, or on [Seerr](https://seerr.example)."
+    assert nw.request_line(True, "") == "🙋 Missing something? Ask for it with `/request`."
+    assert nw.request_line(False, "https://seerr.example") == \
+        "🙋 Missing something? Ask for it on [Seerr](https://seerr.example)."
+    assert nw.request_line(False, "") is None
+
+
+def test_the_request_line_closes_the_post():
+    entries = [entry("film", "Dune", year=2021)]
+    start, end = datetime(2026, 11, 8), datetime(2026, 11, 15)
+    tail = nw.request_line(True, "https://seerr.example")
+    assert nw.description(entries, lambda i: None, start, end, tail) == \
+        nw.description(entries, lambda i: None, start, end) + "\n\n" + tail
+    assert nw.description(entries, lambda i: None, start, end, None) == nw.description(entries, lambda i: None, start, end)
+
+
+def test_a_long_post_keeps_room_for_the_request_line():
+    entries = [entry("film", f"A Film With Quite A Long Title Number {n}") for n in range(200)]
+    tail = nw.request_line(True, "https://seerr.example")
+    text = nw.description(entries, lambda i: f"https://jellyfin.example.com/web/#/details?id={i}",
+                          datetime(2026, 11, 8), datetime(2026, 11, 15), tail)
+    assert len(text) <= nw.DESCRIPTION_LIMIT
+    assert text.endswith("more\n\n" + tail)

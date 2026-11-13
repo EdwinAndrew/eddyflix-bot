@@ -1,9 +1,13 @@
-"""/jf-subscribe, /jf-unsubscribe, /jf-subscriptions, and the DMs they lead to.
+"""/subscribe, /unsubscribe, /subscriptions, and the DMs they lead to.
 
 Every five minutes the bot looks for episodes added to Jellyfin since its last
 look (see new_episodes.py) and DMs each subscriber once per show: "6 new
 episodes of Fallout: S02E01–E06". Anyone whose DMs are closed is mentioned in
 the activity channel instead.
+
+It also offers the subscription with a 🔔 button to someone who has just caught
+up on a show, once per member per show (catch_up.py). The activity cog calls
+offer_if_caught_up when a play ends.
 """
 import io
 from datetime import datetime, timezone
@@ -13,6 +17,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+import catch_up
 import config
 import new_episodes
 from cogs.movie_night import JELLYFIN_ID, details_link, film_label
@@ -20,6 +25,7 @@ from cogs.movie_night import JELLYFIN_ID, details_link, film_label
 COLOUR = discord.Colour(0x00A4DC)      # Jellyfin blue
 PAGE = 100                             # episodes per request while polling
 SEED_PAGE = 500                        # ...and while noting the whole library once
+CATCH_UP_PAGE = 10                     # a series' newest episodes asked for at a time
 
 
 def best_series(typed: str, found: list[dict]) -> dict | None:
@@ -49,7 +55,7 @@ def notification_embed(episodes: list[dict]) -> discord.Embed:
         colour=COLOUR,
         timestamp=datetime.now(timezone.utc),
     )
-    embed.set_footer(text="You subscribed with /jf-subscribe · /jf-unsubscribe to stop")
+    embed.set_footer(text="You subscribed with /subscribe · /unsubscribe to stop")
     return embed
 
 
@@ -166,6 +172,88 @@ class Subscriptions(commands.Cog):
             if series_id and row[3] != series_id:
                 await db.execute("UPDATE subscriptions SET show_id = ? WHERE id = ?", (series_id, row[0]))
 
+    # --- the catch-up offer ---------------------------------------------------
+
+    async def latest_episode(self, series_id: str) -> dict | None:
+        """The newest episode the library has of a series. One short page when
+        Jellyfin sorts as asked, the whole series when it does not."""
+        page = await self.bot.jf.newest_episodes(series_id, limit=CATCH_UP_PAGE)
+        if len(page) < CATCH_UP_PAGE or (catch_up.newest_first(page) and catch_up.latest(page)):
+            return catch_up.latest(page)
+        return catch_up.latest(await self.bot.jf.newest_episodes(series_id, limit=None))
+
+    async def offer_if_caught_up(self, session: dict):
+        """Called with a session as last seen playing, when that play ends. Offers
+        the 🔔 subscription to each member linked to its Jellyfin user who has
+        just finished the newest episode of a show still running, unless they
+        are subscribed or were offered it before."""
+        item = session.get("NowPlayingItem") or {}
+        series_id, user_name = item.get("SeriesId"), session.get("UserName")
+        if item.get("Type") != "Episode" or not series_id or not user_name or self.bot.jf is None:
+            return
+        series_name = item.get("SeriesName")
+        # The database first: most plays end here, without asking Jellyfin anything.
+        async with aiosqlite.connect(config.DB_PATH) as db:
+            members = [m for m in await catch_up.linked_members(db, user_name)
+                       if not await catch_up.offered(db, m, series_id, series_name)
+                       and not await new_episodes.subscribed(db, m, series_id, series_name)]
+        if not members:
+            return
+
+        jf = self.bot.jf
+        if not catch_up.caught_up(item, await self.latest_episode(series_id)):
+            return
+        if not catch_up.reached_end(session):
+            # Stopped in the credits between two polls: Jellyfin knows better.
+            user_id = session.get("UserId") or await jf.get_user_id(user_name)
+            played = await jf.get_item(item["Id"], user_id) if user_id and item.get("Id") else {}
+            if not (played.get("UserData") or {}).get("Played"):
+                return
+        series = await jf.get_item(series_id)
+        if series.get("Status") == "Ended":
+            return
+        name = series.get("Name") or series_name or "this show"
+
+        for member in members:
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                fresh = await catch_up.mark_offered(db, member, series_id, name)
+                await db.commit()
+            if fresh:
+                await self.send_offer(member, series_id, name)
+
+    async def send_offer(self, member_id: str, series_id: str, name: str):
+        """The offer as a DM, or a mention in the activity channel when DMs are closed."""
+        embed = catch_up.offer_embed(name)
+        poster = None
+        try:
+            poster = await self.bot.jf.get_image(series_id, "Primary", max_width=300)
+        except Exception as e:
+            print(f"No poster for {name}: {e}")
+        if poster:
+            embed.set_thumbnail(url="attachment://poster.jpg")
+
+        def extra():
+            # A discord.File is used up by one send, so each message gets its own.
+            return {"files": [discord.File(io.BytesIO(poster), filename="poster.jpg")] if poster else [],
+                    "view": catch_up.offer_view(series_id, member_id)}
+
+        try:
+            user = self.bot.get_user(int(member_id)) or await self.bot.fetch_user(int(member_id))
+            await user.send(embed=embed, **extra())
+            print(f"Offered {member_id} new-episode DMs for {name}")
+            return
+        except (discord.HTTPException, ValueError) as e:
+            print(f"Could not DM {member_id} the offer for {name}: {e}")
+
+        channel = self.bot.get_channel(config.ACTIVITY_CHANNEL_ID) if config.ACTIVITY_CHANNEL_ID else None
+        if channel:
+            try:
+                await channel.send(content=catch_up.fallback_text(member_id, name), embed=embed, **extra(),
+                                   allowed_mentions=discord.AllowedMentions(users=[discord.Object(int(member_id))],
+                                                                            roles=False, everyone=False))
+            except (discord.HTTPException, ValueError) as e:
+                print(f"Could not post the offer fallback for {name}: {e}")
+
     # --- the commands --------------------------------------------------------
 
     async def resolve_series(self, value: str) -> dict | None:
@@ -183,7 +271,7 @@ class Subscriptions(commands.Cog):
         """, (user_id,)) as cursor:
             return await cursor.fetchall()
 
-    @app_commands.command(name="jf-subscribe", description="Get a DM when new episodes of a show are added")
+    @app_commands.command(name="subscribe", description="Get a DM when new episodes of a show are added")
     @app_commands.describe(show="A show from the Jellyfin library")
     async def subscribe_command(self, interaction: discord.Interaction, show: str):
         await interaction.response.defer(ephemeral=True)
@@ -201,21 +289,10 @@ class Subscriptions(commands.Cog):
             return
 
         name, series_id = series.get("Name"), series.get("Id")
-        user_id = str(interaction.user.id)
         try:
             async with aiosqlite.connect(config.DB_PATH) as db:
-                if new_episodes.subscribers(await self.user_rows(db, user_id), series_id, name):
-                    already = True
-                else:
-                    try:
-                        await db.execute("""
-                            INSERT INTO subscriptions (discord_user_id, discord_username, show_name, show_id)
-                            VALUES (?, ?, ?, ?)
-                        """, (user_id, interaction.user.name, name, series_id))
-                        await db.commit()
-                        already = False
-                    except aiosqlite.IntegrityError:
-                        already = True
+                already = not await new_episodes.subscribe(db, str(interaction.user.id), interaction.user.name,
+                                                           name, series_id)
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
             return
@@ -242,7 +319,7 @@ class Subscriptions(commands.Cog):
             return []
         return [app_commands.Choice(name=film_label(i)[:100], value=i["Id"]) for i in items]
 
-    @app_commands.command(name="jf-unsubscribe", description="Stop new-episode DMs for a show")
+    @app_commands.command(name="unsubscribe", description="Stop new-episode DMs for a show")
     @app_commands.describe(show="One of your subscriptions")
     async def unsubscribe_command(self, interaction: discord.Interaction, show: str):
         await interaction.response.defer(ephemeral=True)
@@ -279,7 +356,7 @@ class Subscriptions(commands.Cog):
         return [app_commands.Choice(name=r[2][:100], value=r[2][:100])
                 for r in rows if current.lower() in r[2].lower()][:25]
 
-    @app_commands.command(name="jf-subscriptions", description="List the shows you get new-episode DMs for")
+    @app_commands.command(name="subscriptions", description="List the shows you get new-episode DMs for")
     async def subscriptions_command(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
@@ -291,7 +368,7 @@ class Subscriptions(commands.Cog):
 
         if not rows:
             await interaction.followup.send("You don't have any show subscriptions yet.\n\n"
-                                            "Use `/jf-subscribe` to get a DM when a show gets new episodes.",
+                                            "Use `/subscribe` to get a DM when a show gets new episodes.",
                                             ephemeral=True)
             return
 
@@ -307,7 +384,7 @@ class Subscriptions(commands.Cog):
             except (ValueError, TypeError):
                 date_str = "Unknown"
             embed.add_field(name=f"📺 {show_name}", value=f"Subscribed: {date_str}", inline=True)
-        embed.set_footer(text="Use /jf-unsubscribe to remove a subscription")
+        embed.set_footer(text="Use /unsubscribe to remove a subscription")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 

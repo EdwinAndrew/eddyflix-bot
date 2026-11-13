@@ -6,6 +6,7 @@ from datetime import datetime
 import discord
 from discord.ext import commands
 
+import catch_up
 import config
 import ratings
 import watch_data
@@ -51,6 +52,8 @@ class EddyFlixBot(commands.Bot):
         self.add_view(movie_night.RolePicker())
         # And the 1-5 🍿 rating buttons on movie night recaps, by event id
         self.add_dynamic_items(ratings.RateButton)
+        # And the 🔔 new-episode offer sent to someone who caught up on a show, by show and member
+        self.add_dynamic_items(catch_up.OfferButton)
 
     async def on_ready(self):
         self.start_time = datetime.now()

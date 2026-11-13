@@ -1,15 +1,14 @@
 """The weekly "New on EddyFlix" post: Sundays just after the digest, in the same
-channel, or now with /jf-weekly-new (owner only). Skipped on a week with nothing new."""
+channel, or now with /admin weekly-new (owner only). Skipped on a week with nothing new.
+Ends with a line pointing to /request and Seerr, when Seerr is set up."""
 import io
 from datetime import datetime, time, timezone
 
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 
 import config
 import new_this_week as nw
-from checks import owner_only
 from cogs.digest import DIGEST_TIME
 from cogs.movie_night import TZ, details_link
 
@@ -52,7 +51,9 @@ class WeeklyNew(commands.Cog):
                 print(f"New on EddyFlix: no poster for {entry.name}: {e}")
         png = nw.render_grid(entries, posters, start, end)
         embed = discord.Embed(title="🆕 New on EddyFlix this week",
-                              description=nw.description(entries, details_link, start, end),
+                              description=nw.description(entries, details_link, start, end,
+                                                         nw.request_line(bool(config.SEERR_URL and config.SEERR_API_KEY),
+                                                                         config.SEERR_PUBLIC_URL)),
                               colour=discord.Colour(nw.COLOUR))
         embed.set_image(url="attachment://new-this-week.png")
         embed.set_footer(text=nw.counts(entries))
@@ -80,9 +81,8 @@ class WeeklyNew(commands.Cog):
             except Exception as e:
                 print(f"New on EddyFlix: {e}")
 
-    @app_commands.command(name="jf-weekly-new", description="(Owner) Post the weekly New on EddyFlix list now")
-    @owner_only()
-    async def weekly_new_command(self, interaction: discord.Interaction):
+    async def post_now(self, interaction: discord.Interaction):
+        """/admin weekly-new"""
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             message = await self.post()

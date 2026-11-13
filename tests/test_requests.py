@@ -118,7 +118,7 @@ def test_unlinked_member_cannot_request(db_path):
     assert asyncio.run(cog.seerr_user(222)) == (None, None)
     text = asyncio.run(cog.place_request(SimpleNamespace(id=222), "movie", FILM, None, None, None))
     assert cog.seerr.made == []
-    assert text == rq.NOT_LINKED and "/jf-link" in text
+    assert text == rq.NOT_LINKED and "/link" in text
 
 
 def test_no_request_buttons_unless_linked():
@@ -270,7 +270,7 @@ def test_card(monkeypatch):
     assert [(f.name, f.value) for f in embed.fields] == [
         ("Status", "➕ Not in the library yet. It can be requested"), ("Runtime", "1h 36m"), ("Genre", "Animation")]
     assert embed.footer.text == "Requests are made as your Seerr user, Kevin."
-    assert "/jf-link" in rq.request_card("movie", film, None).footer.text
+    assert "/link" in rq.request_card("movie", film, None).footer.text
     there = {**SHOW, "status": "Returning Series",
              "mediaInfo": {"status": mr.MEDIA_AVAILABLE, "jellyfinMediaId": ITEM}}
     embed = rq.request_card("tv", there, None)

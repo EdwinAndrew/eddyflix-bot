@@ -5,7 +5,7 @@ Run after every deploy, inside the container:
 
     docker exec jellyfin-discord-bot python selftest.py
 
-It prints one line per check and exits 1 if any failed. /jf-selftest runs the
+It prints one line per check and exits 1 if any failed. /admin selftest runs the
 same checks, then the ones that need Discord (cogs/selftest.py).
 """
 import asyncio
@@ -19,7 +19,7 @@ from cogs.movie_night import film_label
 from cogs.watch import clock, episode_label
 
 TABLES = ("watch_history", "user_links", "subscriptions", "movie_nights",
-          "movie_night_attendance", "bot_state", "known_episodes")
+          "movie_night_attendance", "bot_state", "known_episodes", "subscription_offers")
 
 
 @dataclass
@@ -144,8 +144,9 @@ def database_checks(path: str | None = None, findings: Findings | None = None) -
             f.add("Database tables", not missing, f"missing {', '.join(missing)}" if missing else f"{len(TABLES)} present")
             if "watch_history" in have:
                 columns = {r[1] for r in db.execute("PRAGMA table_info(watch_history)")}
-                f.add("Transcode reasons are recorded", "transcode_reasons" in columns,
-                      "column present" if "transcode_reasons" in columns else "no transcode_reasons column")
+                wanted = [c for c in ("transcode_reasons", "transcode_kind") if c not in columns]
+                f.add("Transcode reasons and kinds are recorded", not wanted,
+                      f"no {', '.join(wanted)} column" if wanted else "columns present")
             row = db.execute("SELECT value FROM bot_state WHERE key = ?", (new_episodes.MARK_KEY,)).fetchone() \
                 if "bot_state" in have else None
             f.add("New-episode poll has run", bool(row), f"seen up to {row[0][:16]}" if row else "no mark yet")

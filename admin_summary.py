@@ -2,7 +2,7 @@
 
 For the server owner, in ADMIN_CHANNEL_ID: how much is transcoded and why, by
 device; what was added to the library; who watched and who has not used
-/jf-link; how the bot and Jellyfin are doing. All of it comes from the bot's own
+/link; how the bot and Jellyfin are doing. All of it comes from the bot's own
 database and Jellyfin. Sonarr, Radarr and Seerr need API keys the bot does not
 have yet; each would be one more section (see Admin.sections in cogs/admin.py).
 
@@ -60,6 +60,43 @@ def transcode_reasons(session: dict) -> list[str]:
     return [r.strip() for r in reasons if r and r.strip()]
 
 
+# What Jellyfin did to a play that isn't played directly, from TranscodingInfo.
+# Only "video" costs real work; the other two copy the picture as it is.
+KINDS = {"video": "full video", "audio": "audio only", "remux": "repackaged"}
+
+
+def transcode_kind(session: dict) -> str | None:
+    """'video' when the picture is re-encoded, 'audio' when only the sound is
+    converted (Dolby audio in Chrome, say), 'remux' when both are copied into a
+    new container. None without TranscodingInfo, or when it doesn't say."""
+    info = session.get('TranscodingInfo') or {}
+    video, audio = info.get('IsVideoDirect'), info.get('IsAudioDirect')
+    if video is None and audio is None:
+        return None
+    if video is False:
+        return "video"
+    if audio is False:
+        return "audio"
+    return "remux"
+
+
+def heavy(session: dict) -> bool:
+    """A transcoding session that may be re-encoding the picture: 'video', or
+    not known yet (Jellyfin fills in TranscodingInfo a poll or two late)."""
+    if (session.get('PlayState') or {}).get('PlayMethod') != 'Transcode':
+        return False
+    return transcode_kind(session) in ("video", None)
+
+
+def kind_counts(plays: list[dict]) -> str:
+    """'3 full video, 12 audio only, 2 not recorded' for transcoded plays."""
+    counts = Counter(p.get('kind') for p in plays)
+    parts = [f"{counts[k]} {name}" for k, name in KINDS.items() if counts[k]]
+    if counts[None]:
+        parts.append(f"{counts[None]} not recorded")
+    return ", ".join(parts)
+
+
 def reason_name(reason: str) -> str:
     return REASONS.get(reason) or re.sub(r"(?<!^)(?=[A-Z])", " ", reason).lower()
 
@@ -69,7 +106,9 @@ def transcode_alert_lines(sessions) -> list[str]:
     lines = []
     for s in sessions:
         reasons = ", ".join(reason_name(r) for r in transcode_reasons(s)) or "reason not given"
-        lines.append(f"• **{s.get('UserName', 'Unknown')}** on {s.get('DeviceName', 'Unknown')}: {reasons}")
+        kind = KINDS.get(transcode_kind(s))
+        lines.append(f"• **{s.get('UserName', 'Unknown')}** on {s.get('DeviceName', 'Unknown')}: "
+                     f"{kind + ', ' if kind else ''}{reasons}")
     return lines
 
 
@@ -101,7 +140,8 @@ def peak_overlap(intervals) -> tuple[int, datetime | None]:
 
 
 def playback_section(plays: list[dict]) -> str:
-    """plays: rows with device, play_method, reasons ("A,B" or None), start, end, seconds."""
+    """plays: rows with device, play_method, reasons ("A,B" or None), kind ('video',
+    'audio', 'remux' or None), start, end, seconds."""
     if not plays:
         return "Nothing played this week."
     transcoded = [p for p in plays if p['play_method'] == 'Transcode']
@@ -109,10 +149,14 @@ def playback_section(plays: list[dict]) -> str:
     short = [p for p in finished if p['seconds'] < SHORT_PLAY.total_seconds()]
     lines = [f"**{len(plays)} plays**, {len(transcoded)} transcoded ({len(transcoded) / len(plays):.0%})"
              f" · {len(short)} under {int(SHORT_PLAY.total_seconds() // 60)} minutes"]
+    if any(p.get('kind') for p in transcoded):
+        lines.append(f"Of those: {kind_counts(transcoded)}. Only full video re-encodes the picture")
 
-    peak, when = peak_overlap([(p['start'], p['end']) for p in transcoded if p['end']])
+    # Load comes from re-encoding the picture; plays from before kinds were recorded count too
+    loaded = [p for p in transcoded if p.get('kind') in ("video", None)]
+    peak, when = peak_overlap([(p['start'], p['end']) for p in loaded if p['end']])
     if peak > 1:
-        lines.append(f"Most transcodes at once: {peak} ({when:%a %-d %b, %-I:%M %p})")
+        lines.append(f"Most video transcodes at once: {peak} ({when:%a %-d %b, %-I:%M %p})")
 
     by_device: dict[str, list[dict]] = {}
     for p in plays:
@@ -122,6 +166,8 @@ def playback_section(plays: list[dict]) -> str:
     for device, group in ranked[:MAX_DEVICES]:
         moved = [p for p in group if p['play_method'] == 'Transcode']
         line = f"**{device}**: {len(moved)} of {len(group)} transcoded"
+        if any(p.get('kind') for p in moved):
+            line += f" ({kind_counts(moved)})"
         if moved:
             reasons = Counter(reason_name(r) for p in moved for r in (p['reasons'] or '').split(',') if r)
             unknown = sum(1 for p in moved if not p['reasons'])
@@ -170,8 +216,8 @@ def people_section(plays: list[dict], jellyfin_users: list[str] | None, linked: 
     else:
         linked_lower = {u.lower() for u in linked}
         unlinked = [u for u in jellyfin_users if u.lower() not in linked_lower]
-        lines.append(f"**Not linked with /jf-link ({len(unlinked)}):** {names(unlinked)}" if unlinked
-                     else "**Not linked with /jf-link:** nobody")
+        lines.append(f"**Not linked with /link ({len(unlinked)}):** {names(unlinked)}" if unlinked
+                     else "**Not linked with /link:** nobody")
     return clip("\n".join(lines))
 
 
@@ -230,7 +276,7 @@ def health_section(health: dict, now: datetime) -> str:
         warn = " ⚠️" if total and free / total < LOW_DISK else ""
         lines.append(f"Disk ({label}): {size(free)} free of {size(total)}{warn}")
     if health.get('open_plays'):
-        lines.append(f"{health['open_plays']} plays never closed in the database (/jf-debug-sessions)")
+        lines.append(f"{health['open_plays']} plays never closed in the database (/admin sessions)")
     return clip("\n".join(lines))
 
 
@@ -255,13 +301,14 @@ def added_since(items: list[dict], since: datetime) -> tuple[list[dict], bool]:
 
 async def plays_since(db, since: datetime) -> list[dict]:
     async with db.execute("""
-        SELECT user_name, device_name, play_method, transcode_reasons, start_time, end_time, duration_seconds
+        SELECT user_name, device_name, play_method, transcode_reasons, start_time, end_time, duration_seconds,
+               transcode_kind
         FROM watch_history WHERE start_time >= ?
     """, (since,)) as cursor:
         rows = await cursor.fetchall()
     return [{"user": r[0], "device": r[1], "play_method": r[2], "reasons": r[3],
              "start": datetime.fromisoformat(r[4]), "end": datetime.fromisoformat(r[5]) if r[5] else None,
-             "seconds": r[6]} for r in rows]
+             "seconds": r[6], "kind": r[7]} for r in rows]
 
 
 async def linked_users(db) -> set[str]:

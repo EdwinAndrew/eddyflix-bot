@@ -2,8 +2,9 @@
 
 /watch finds a film or show by name, /pick picks one at random (with a reroll),
 and /continue lists what you were in the middle of. Every answer is ephemeral, so
-only the person asking sees it. For someone linked with /jf-link the card also
-says where they left off.
+only the person asking sees it. For someone linked with /link the card also
+says where they left off and, for a show, where the other linked members are
+("Sarah is 3 episodes ahead of you"). /pick with:someone picks what neither has seen.
 """
 import asyncio
 import io
@@ -14,6 +15,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import household
 import watch_data
 from cogs.movie_night import JELLYFIN_ID, details_link, film_label
 
@@ -113,8 +115,11 @@ def details(item: dict) -> str:
     return " · ".join(parts) or "—"
 
 
-def watch_card(item: dict, progress: str | None) -> discord.Embed:
-    """The answer to /watch. progress is None when the caller is not linked."""
+def watch_card(item: dict, progress: str | None, ahead: list[str] | None = None,
+               together: str | None = None) -> discord.Embed:
+    """The answer to /watch. progress is None when the caller is not linked; ahead is
+    where the other linked members are in a show; together is who /pick picked for
+    along with the caller."""
     is_series = item.get("Type") == "Series"
     overview = (item.get("Overview") or "").strip()
     embed = discord.Embed(
@@ -128,7 +133,11 @@ def watch_card(item: dict, progress: str | None) -> discord.Embed:
     if progress is not None:
         embed.add_field(name="Where you left off", value=progress, inline=False)
     else:
-        embed.set_footer(text="Use /jf-link to see where you left off.")
+        embed.set_footer(text="Use /link to see where you left off.")
+    if ahead:
+        embed.add_field(name="Others watching", value="\n".join(ahead)[:1024], inline=False)
+    if together:
+        embed.add_field(name=f"You and {together}"[:256], value=household.together_note(item), inline=False)
     return embed
 
 
@@ -153,6 +162,7 @@ LENGTHS = [("Under 30 minutes", 30), ("Under 45 minutes", 45), ("Under 1 hour", 
            ("Under 1½ hours", 90), ("Under 2 hours", 120), ("Under 2½ hours", 150)]
 REROLL_MINUTES = 10                    # the 🎲 button goes after this long unused
 GENRE_CACHE_SECONDS = 600
+ORDER_CACHE_SECONDS = 600              # a show's episode list, for "3 episodes ahead of you"
 
 
 def pick_types(kind: str | None) -> str:
@@ -180,11 +190,15 @@ def genres_matching(genres: list[str], current: str) -> list[str]:
     return [g for g in genres if current.strip().lower() in g.lower()][:25]
 
 
-def pool_footer(count: int, types: str, unwatched: bool, linked: bool) -> str:
-    """'Picked from 77 unwatched films', and a /jf-link hint for someone not linked."""
+def pool_footer(count: int, types: str, unwatched: bool, linked: bool, together: bool = False) -> str:
+    """'Picked from 77 unwatched films', and a /link hint for someone not linked.
+    Picking for two: 'Picked from 12 films neither of you has watched'."""
     nouns = {"Movie": ("film", "films"), "Series": ("show", "shows")}.get(types, ("title", "films and shows"))
-    text = f"Picked from {count} {'unwatched ' if unwatched else ''}{nouns[0] if count == 1 else nouns[1]}"
-    return text + ("" if linked else ". Use /jf-link to see where you left off.")
+    noun = nouns[0] if count == 1 else nouns[1]
+    if together:
+        return f"Picked from {count} {noun} neither of you has watched"
+    text = f"Picked from {count} {'unwatched ' if unwatched else ''}{noun}"
+    return text + ("" if linked else ". Use /link to see where you left off.")
 
 
 def draw(queue: list[dict], pool: list[dict], current_id: str | None) -> dict:
@@ -201,9 +215,11 @@ class PickView(discord.ui.View):
     """🎲 Reroll and Open in Jellyfin under a /pick answer. Rerolling edits the
     same message. Not persistent: after REROLL_MINUTES unused the 🎲 goes."""
 
-    def __init__(self, cog: "Watch", pool: list[dict], user_id: str | None, footer: str):
+    def __init__(self, cog: "Watch", pool: list[dict], user_id: str | None, footer: str,
+                 others: list[tuple[str, str]] = (), together: str | None = None):
         super().__init__(timeout=REROLL_MINUTES * 60)
         self.cog, self.pool, self.user_id, self.footer = cog, pool, user_id, footer
+        self.others, self.together = others, together      # kept for every reroll
         self.queue: list[dict] = []
         self.current: dict | None = None
         self.link: discord.ui.Button | None = None
@@ -211,7 +227,7 @@ class PickView(discord.ui.View):
 
     async def show(self, interaction: discord.Interaction, first: bool = False):
         found = draw(self.queue, self.pool, self.current["Id"] if self.current else None)
-        self.current, embed, poster = await self.cog.answer(found, self.user_id)
+        self.current, embed, poster = await self.cog.answer(found, self.user_id, self.others, self.together)
         embed.set_footer(text=self.footer)
         if self.link:
             self.remove_item(self.link)
@@ -302,12 +318,19 @@ def continue_line(item: dict) -> str:
     return f"▶️ {text} · stopped at {clock(position)}" + (f" of {clock(total)}" if total else "")
 
 
+def continue_entry(item: dict, ahead: list[str] | None) -> str:
+    """A /continue line, with where the others are in that show under it."""
+    line = continue_line(item)
+    return f"{line}\n↳ {' · '.join(ahead)}" if ahead else line
+
+
 # --- the command -------------------------------------------------------------
 
 class Watch(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self._genres: dict[str, tuple[float, list[str]]] = {}      # types -> (when, names)
+        self._orders: dict[str, tuple[float, list]] = {}           # series id -> (when, episode order)
 
     async def resolve(self, value: str) -> dict | None:
         """The autocomplete gives an item id; typed text without picking is searched instead."""
@@ -317,33 +340,101 @@ class Watch(commands.Cog):
                 return item
         return best_match(value, await self.bot.jf.search_titles(value, limit=10))
 
-    async def jellyfin_user(self, discord_user_id: int) -> str | None:
-        """The caller's Jellyfin user id, or None when they are not linked or the
-        link names no Jellyfin user."""
-        name = await watch_data.get_link(discord_user_id)
-        return await self.bot.jf.get_user_id(name) if name else None
+    async def household(self, interaction: discord.Interaction) -> tuple[dict[int, str], list[tuple[str, str]]]:
+        """Every linked member's Jellyfin user id by Discord id (a link naming no Jellyfin
+        user is left out), and the linked members other than the caller as (name,
+        Jellyfin id). One database read and one /Users call."""
+        links = await watch_data.all_links()
+        if not links:
+            return {}, []
+        user_ids = {(u.get("Name") or "").lower(): u["Id"] for u in await self.bot.jf.get_users() if u.get("Id")}
+        by_discord = {d: user_ids[n.lower()] for d, n in links if n.lower() in user_ids}
+        guild = interaction.guild
+        names = {d: m.display_name for d, _ in links if guild and (m := guild.get_member(d))}
+        return by_discord, household.other_members(links, by_discord.get(interaction.user.id), user_ids, names)
 
-    async def progress(self, user_id: str | None, item_id: str) -> tuple[dict | None, str | None]:
-        """The item as this Jellyfin user sees it, and where they left off.
-        (None, None) without a user."""
+    async def progress(self, user_id: str | None, item_id: str) -> tuple[dict | None, str | None, dict | None]:
+        """The item as this Jellyfin user sees it, where they left off, and for a show
+        the episode they are on. (None, None, None) without a user."""
         if not user_id:
-            return None, None
+            return None, None, None
         item = await self.bot.jf.get_item(item_id, user_id)
         if not item:
-            return None, None
+            return None, None, None
         if item.get("Type") == "Series":
-            return item, series_progress(item, await self.bot.jf.next_up(user_id, item_id))
-        return item, film_progress(item)
+            next_episode = await self.bot.jf.next_up(user_id, item_id)
+            return item, series_progress(item, next_episode), next_episode
+        return item, film_progress(item), None
 
-    async def answer(self, found: dict, user_id: str | None) -> tuple[dict, discord.Embed, discord.File | None]:
+    async def episode_order(self, series_id: str) -> list:
+        """A show's episodes as (season, episode), kept for a while: rerolls and
+        /continue ask for the same shows again."""
+        cached = self._orders.get(series_id)
+        if cached and time.monotonic() - cached[0] < ORDER_CACHE_SECONDS:
+            return cached[1]
+        order = household.episode_order(await self.bot.jf.series_episodes(series_id))
+        self._orders[series_id] = (time.monotonic(), order)
+        return order
+
+    async def their_progress(self, series_ids: list[str], others: list[tuple[str, str]]):
+        """For each other member: (name, their shows by id, their next-up episode by show id).
+        Two calls per member, whatever the number of shows."""
+        jf = self.bot.jf
+
+        async def one(user_id: str):
+            if len(series_ids) == 1:
+                shows, episode = await asyncio.gather(jf.user_items(series_ids, user_id),
+                                                      jf.next_up(user_id, series_ids[0]))
+                next_up = [episode] if episode else []
+            else:
+                shows, next_up = await asyncio.gather(jf.user_items(series_ids, user_id),
+                                                      jf.next_up_items(user_id, limit=100))
+            by_show: dict[str, dict] = {}
+            for episode in next_up:
+                by_show.setdefault(episode.get("SeriesId"), episode)
+            return {s.get("Id"): s for s in shows}, by_show
+
+        found = await asyncio.gather(*(one(user_id) for _, user_id in others))
+        return [(name, shows, by_show) for (name, _), (shows, by_show) in zip(others, found)]
+
+    async def ahead_by_show(self, series_ids: list[str], mine, others: list[tuple[str, str]]) -> dict[str, list[str]]:
+        """'Sarah is 3 episodes ahead of you' lines for each show, for the others who
+        have watched it. mine(series_id, order) is the caller's position. A failure
+        here leaves the lines out rather than the answer."""
+        if not series_ids or not others:
+            return {}
+        try:
+            theirs = await self.their_progress(series_ids, others)
+            # Only the shows someone else has started need their episode list
+            watched = [s for s in series_ids
+                       if any(household.started(shows.get(s) or {}, by_show.get(s)) for _, shows, by_show in theirs)]
+            orders = dict(zip(watched, await asyncio.gather(*(self.episode_order(s) for s in watched))))
+        except Exception as e:
+            print(f"Couldn't see where the others are in {series_ids}: {e}")
+            return {}
+        lines = {}
+        for series_id, order in orders.items():
+            where = [(name, at) for name, shows, by_show in theirs
+                     if (at := household.position(order, shows.get(series_id) or {}, by_show.get(series_id))) is not None]
+            if where and (text := household.ahead_lines(mine(series_id, order), where, len(order))):
+                lines[series_id] = text
+        return lines
+
+    async def answer(self, found: dict, user_id: str | None, others: list[tuple[str, str]] = (),
+                     together: str | None = None) -> tuple[dict, discord.Embed, discord.File | None]:
         """The card for a film or show: the full item, the embed, and its poster."""
-        item, progress = await self.progress(user_id, found["Id"])
+        item, progress, next_episode = await self.progress(user_id, found["Id"])
+        ahead = None
+        if item is not None and item.get("Type") == "Series" and others:
+            ahead = (await self.ahead_by_show(
+                [item["Id"]], lambda _, order: household.my_position(order, item, next_episode), others)
+            ).get(item["Id"])
         if item is None:
             item = await self.bot.jf.get_item(found["Id"]) or found
             # Jellyfin counts a show's episodes only when asked as a user
             if item.get("Type") == "Series" and not item.get("RecursiveItemCount"):
                 item = {**item, "RecursiveItemCount": await self.bot.jf.get_series_episode_count(item["Id"])}
-        embed = watch_card(item, progress)
+        embed = watch_card(item, progress, ahead, together)
         poster = None
         if image := await self.bot.jf.get_image(item["Id"], "Primary", max_width=600):
             poster = discord.File(io.BytesIO(image), filename="poster.jpg")
@@ -373,7 +464,8 @@ class Watch(commands.Cog):
         if not found:
             await interaction.followup.send(f"Nothing called “{title}” in Jellyfin.", ephemeral=True)
             return
-        item, embed, poster = await self.answer(found, await self.jellyfin_user(interaction.user.id))
+        by_discord, others = await self.household(interaction)
+        item, embed, poster = await self.answer(found, by_discord.get(interaction.user.id), others)
         extra = {}
         if view := open_button(item):
             extra["view"] = view
@@ -394,12 +486,13 @@ class Watch(commands.Cog):
     # --- /pick ----------------------------------------------------------------
 
     @app_commands.command(name="pick", description="Something to watch, picked at random, with a reroll")
-    @app_commands.rename(kind="type")
+    @app_commands.rename(kind="type", partner="with")
     @app_commands.describe(
         kind="A film or a show (either, if left out)",
         genre="A genre from the library",
         max_length="How long it can be. For a show, the length of an episode",
-        include_watched="Also pick what you've already seen (once you've used /jf-link)",
+        include_watched="Also pick what you've already seen (once you've used /link)",
+        partner="Someone to watch with: only what neither of you has seen (you both need /link)",
     )
     @app_commands.choices(
         kind=[app_commands.Choice(name="Film", value="film"), app_commands.Choice(name="Show", value="show")],
@@ -407,24 +500,50 @@ class Watch(commands.Cog):
     )
     async def pick(self, interaction: discord.Interaction, kind: app_commands.Choice[str] | None = None,
                    genre: str | None = None, max_length: app_commands.Choice[int] | None = None,
-                   include_watched: bool = False):
+                   include_watched: bool = False, partner: discord.Member | None = None):
         if self.bot.jf is None:
             await interaction.response.send_message("Jellyfin isn't configured.", ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
 
+        by_discord, others = await self.household(interaction)
+        user_id = by_discord.get(interaction.user.id)
+        # include_watched turns the filter off for both; with yourself is a pick for you
+        if include_watched or (partner and partner.id == interaction.user.id):
+            partner = None
+        partner_id = None
+        if partner:
+            if partner.bot:
+                await interaction.followup.send("Pick a person to watch with, not a bot.", ephemeral=True)
+                return
+            partner_id = by_discord.get(partner.id)
+            if problem := household.not_linked(bool(user_id), partner.display_name, bool(partner_id)):
+                await interaction.followup.send(problem, ephemeral=True)
+                return
+
         types = pick_types(kind.value if kind else None)
         if genre:
             genre = match_genre(genre, await self.genres(types))
-        user_id = await self.jellyfin_user(interaction.user.id)
         unwatched = bool(user_id) and not include_watched
-        items = await self.bot.jf.pick_pool(types, genre, user_id, unwatched)
+        if partner:
+            mine, theirs = await asyncio.gather(self.bot.jf.pick_pool(types, genre, user_id, True),
+                                                self.bot.jf.pick_pool(types, genre, partner_id, True))
+            items = household.unwatched_by_both(mine, theirs)
+        else:
+            items = await self.bot.jf.pick_pool(types, genre, user_id, unwatched)
         pool = [i for i in items if short_enough(i, max_length.value if max_length else None)]
         if not pool:
-            hint = " Try `include_watched`, or fewer filters." if unwatched else " Try fewer filters."
-            await interaction.followup.send("Nothing in the library matches that." + hint, ephemeral=True)
+            if partner:
+                message = (f"Nothing that neither you nor {partner.display_name} has seen matches that. "
+                           "Try fewer filters, or `include_watched`.")
+            else:
+                hint = " Try `include_watched`, or fewer filters." if unwatched else " Try fewer filters."
+                message = "Nothing in the library matches that." + hint
+            await interaction.followup.send(message, ephemeral=True)
             return
-        view = PickView(self, pool, user_id, pool_footer(len(pool), types, unwatched, linked=bool(user_id)))
+        footer = pool_footer(len(pool), types, unwatched, linked=bool(user_id), together=bool(partner))
+        view = PickView(self, pool, user_id, footer, others if user_id else [],
+                        partner.display_name if partner else None)
         await view.show(interaction, first=True)
 
     @pick.autocomplete("genre")
@@ -446,10 +565,11 @@ class Watch(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        user_id = await self.jellyfin_user(interaction.user.id)
+        by_discord, others = await self.household(interaction)
+        user_id = by_discord.get(interaction.user.id)
         if not user_id:
             await interaction.followup.send(
-                "Link your Jellyfin user with `/jf-link` first, then `/continue` shows what you were in the middle of.",
+                "Link your Jellyfin user with `/link` first, then `/continue` shows what you were in the middle of.",
                 ephemeral=True)
             return
         # More than we list: seasons, finished episodes and repeats of a show drop out
@@ -462,8 +582,13 @@ class Watch(commands.Cog):
         if not items:
             await interaction.followup.send("Nothing in progress. `/pick` can find you something.", ephemeral=True)
             return
-        embed = discord.Embed(title="Continue watching", colour=COLOUR,
-                              description="\n".join(continue_line(i) for i in items))
+        # The caller is on the listed episode of each show
+        shows = {i["SeriesId"]: i for i in items if i.get("Type") == "Episode" and i.get("SeriesId")}
+        ahead = await self.ahead_by_show(list(shows), lambda show, order: household.index_of(order, shows[show]),
+                                         others)
+        entries = [continue_entry(i, ahead.get(i.get("SeriesId")) if i.get("Type") == "Episode" else None)
+                   for i in items]
+        embed = discord.Embed(title="Continue watching", colour=COLOUR, description="\n".join(entries)[:4096])
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 

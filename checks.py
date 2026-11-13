@@ -4,9 +4,10 @@ from discord import app_commands
 
 
 # --- Owner-only commands ----------------------------------------------------
-# For the server owner (or the bot application's owner) only. default_permissions
-# hides them from everyone without Administrator in the command list; the check
-# refuses anyone else who calls them anyway.
+# For the server owner (or the bot application's owner) only. They live in the /admin
+# group (cogs/admin.py), whose default_permissions hides it from everyone without
+# Administrator; owner_only also sets that, for a top-level command. The check refuses
+# anyone else who calls them anyway.
 async def is_owner(interaction: discord.Interaction) -> bool:
     if interaction.guild and interaction.user.id == interaction.guild.owner_id:
         return True
