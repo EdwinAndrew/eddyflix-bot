@@ -212,6 +212,36 @@ class JellyfinClient:
             f"&Fields=ProductionYear&{FILMS_NOT_COLLECTIONS}")
         return result.get('Items', []) if isinstance(result, dict) else []
 
+    async def pick_pool(self, types: str = "Movie,Series", genre: str | None = None,
+                        user_id: str | None = None, unwatched: bool = False) -> List[dict]:
+        """Every film and/or show matching the filters, for /pick to choose from.
+        Jellyfin has no runtime filter (MaxRunTimeTicks is ignored), so the caller
+        filters by length."""
+        endpoint = (f"/Items?IncludeItemTypes={types}&Recursive=true&Limit=1000"
+                    f"&EnableImages=false&{FILMS_NOT_COLLECTIONS}")
+        if genre:
+            endpoint += f"&Genres={quote(genre)}"
+        if user_id:
+            endpoint += f"&userId={user_id}"
+            # IsPlayed without a user id gets a 400. For a show it means not finished.
+            if unwatched:
+                endpoint += "&IsPlayed=false"
+        result = await self._get(endpoint)
+        return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def get_genres(self, types: str = "Movie,Series") -> List[str]:
+        """The genres of the library's films and/or shows, by name."""
+        result = await self._get(f"/Genres?Recursive=true&IncludeItemTypes={types}")
+        items = result.get('Items', []) if isinstance(result, dict) else []
+        return [g['Name'] for g in items if g.get('Name')]
+
+    async def played_episodes(self, user_id: str, limit: int = 100) -> List[dict]:
+        """Episodes this user finished, most recently played first."""
+        result = await self._get(
+            f"/Items?userId={user_id}&IncludeItemTypes=Episode&Recursive=true&IsPlayed=true"
+            f"&SortBy=DatePlayed&SortOrder=Descending&Limit={limit}&EnableImages=false")
+        return result.get('Items', []) if isinstance(result, dict) else []
+
     async def get_image(self, item_id: str, image_type: str = "Primary",
                         max_width: int = 1000) -> bytes | None:
         """An item's image as JPEG bytes, or None if it has none.

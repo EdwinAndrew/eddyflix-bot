@@ -18,6 +18,8 @@ Feature work and bugs are tracked in the
 | **New-episode DMs** | `/jf-subscribe` to a show from the library and the bot DMs you when new episodes land, one message per show per batch ("6 new episodes of Fallout: S02E01–E06") with the poster and links. Checked every five minutes; a show still importing is held for ten minutes so a whole season is one message. Closed DMs get a mention in the activity channel instead |
 | **Find something to watch** | `/watch` searches films and shows and answers only you: poster, overview, runtime, a link to open it in Jellyfin and, once you have used `/jf-link`, where you left off (the next episode, or the time you stopped a film at) |
 | **Getting started** | A guide in `#roles` for newcomers: how to get an account, which app on an LG TV, an iPhone or in a browser, the address, where to request things, and what to do on Discord after. The picker next to it has a **Which Jellyfin user are you?** button, the same as `/jf-link` without knowing the command |
+| **Pick something** | `/pick` picks a random film or show, with the same card as `/watch` and a **🎲 Reroll** button that swaps it in place (it goes after ten minutes unused). Narrow it by type, genre (from the library) and length (for a show, the episode length). Once you have used `/jf-link` it picks only what you haven't watched, or haven't finished for a show, unless you ask for `include_watched` |
+| **Continue watching** | `/continue` lists what you were in the middle of, up to eight, newest first and linked to Jellyfin: films you stopped part-way, and for each show the episode you stopped in or the next one. Only you see it; it needs `/jf-link` |
 | **Movie night** | Themed roles with a picker in `#roles`, `/movienight` and `/movievote`, a reminder 15 minutes before, the event shown as live, and a recap of who was in the Theatre. `/spoiler` puts someone in *Spoiler Alert* for a while. See below |
 | **Health** | A heartbeat file for Docker's health check, written only while Discord *and* Jellyfin answer, and an optional Uptime Kuma push. `/jf-selftest` (owner) checks everything end to end; see [Testing](#testing) |
 
@@ -26,7 +28,7 @@ Feature work and bugs are tracked in the
 `/jf-health` · `/jf-stats` · `/jf-status` · `/jf-recent` · `/jf-stats-graph` · `/jf-popular` ·
 `/jf-subscribe` · `/jf-unsubscribe` · `/jf-subscriptions` · `/jf-weekly-digest` ·
 `/jf-achievements` · `/jf-achievements-all` · `/jf-link` · `/jf-streaks` · `/jf-streaks-leaderboard` ·
-`/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/movienight` · `/movievote` · `/spoiler` · `/unspoiler`
+`/jf-debug-sessions` · `/jf-selftest` · `/jf-help` · `/watch` · `/pick` · `/continue` · `/movienight` · `/movievote` · `/spoiler` · `/unspoiler`
 
 ### Movie night
 
@@ -125,7 +127,7 @@ All settings are in [.env.example](.env.example).
 | `screenings.py` | Movie night timing: when to remind, start and end, who attended, the recap |
 | `new_episodes.py` | Finding newly added episodes and grouping them for subscription DMs |
 | `tiers.py` | Watch-time tiers and drawing their badges. Art in `assets/`, licences in [assets/LICENSES.md](assets/LICENSES.md) |
-| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night` (and `#roles`: the picker, the Jellyfin link button and the guide), `spoiler`, `watch`, `help` |
+| `cogs/` | One feature each: `dashboard`, `activity` (the feed, and where plays are recorded), `digest`, `health` (heartbeat), `server` (status, stats, recent, popular, graph), `subscriptions` (and the new-episode poll), `achievements`, `movie_night` (and `#roles`: the picker, the Jellyfin link button and the guide), `spoiler`, `watch` (with `/pick` and `/continue`), `help` |
 
 Background loops start when the bot dispatches `services_ready`, ten seconds after it connects
 and has set up the database and the movie night channels. Each cog with a loop listens for it.
