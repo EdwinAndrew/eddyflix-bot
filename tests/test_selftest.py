@@ -106,7 +106,7 @@ def db_path(tmp_path, monkeypatch):
 def test_database_checks(db_path):
     shown = lines(selftest.database_checks())
     assert shown["Database tables"][0] is True
-    assert shown["Transcode reasons are recorded"][0] is True
+    assert shown["Transcode reasons and kinds are recorded"][0] is True
     assert shown["New-episode poll has run"] == (False, "no mark yet")
     with sqlite3.connect(db_path) as db:
         db.execute("INSERT INTO bot_state (key, value) VALUES ('episodes_seen_until', '2026-11-12T19:04:12+00:00')")

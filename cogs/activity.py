@@ -28,7 +28,7 @@ class Activity(commands.Cog):
         self.sessions_seeded = False   # set after the first session poll; see check_sessions
         self.parties = {}              # item id -> the watch party on it; see update_parties
         self.feed = viewings.Feed()     # one post per viewing; see viewings.py
-        self.reasons_recorded = set()  # (session, item) whose transcode reasons are saved
+        self.reasons_recorded = {}  # (session, item) -> the (reasons, kind) last saved for it
         self.transcode_warned = False
         self.now = datetime.now         # replaced in the tests
 
@@ -122,7 +122,7 @@ class Activity(commands.Cog):
                 if prev_item:
                     await watch_data.record_watch_end(self.bot.jf, sess_id, prev_item.get('Id'))
                     await self.play_ended(prev_session)
-            self.reasons_recorded = {k for k in self.reasons_recorded if k[0] in current_session_ids}
+            self.reasons_recorded = {k: v for k, v in self.reasons_recorded.items() if k[0] in current_session_ids}
 
             # Connections are not posted: Jellyfin opens a session whenever
             # someone opens an app, and keeps idle ones for hours (#13).
@@ -168,13 +168,17 @@ class Activity(commands.Cog):
             await self.play_ended(self.active_sessions[sess_id])
 
         reasons = admin_summary.transcode_reasons(session)
-        if now_playing and reasons and (sess_id, now_item_id) not in self.reasons_recorded:
-            play_method = (session.get('PlayState') or {}).get('PlayMethod')
-            await watch_data.record_transcode(sess_id, now_item_id, play_method, reasons)
-            self.reasons_recorded.add((sess_id, now_item_id))
+        kind = admin_summary.transcode_kind(session)
         if not now_playing or now_item_id != prev_item_id:
-            self.reasons_recorded = {k for k in self.reasons_recorded
+            self.reasons_recorded = {k: v for k, v in self.reasons_recorded.items()
                                      if k[0] != sess_id or k[1] == now_item_id}
+        # Saved again when it changes: the kind can show up a poll after the
+        # reasons, and a player can fall back from audio-only to full video
+        seen = (tuple(reasons), kind)
+        if now_playing and (reasons or kind) and self.reasons_recorded.get((sess_id, now_item_id)) != seen:
+            play_method = (session.get('PlayState') or {}).get('PlayMethod')
+            await watch_data.record_transcode(sess_id, now_item_id, play_method, reasons, kind)
+            self.reasons_recorded[(sess_id, now_item_id)] = seen
 
         self.active_sessions[sess_id] = session
 
@@ -209,10 +213,11 @@ class Activity(commands.Cog):
             print(f"Could not post a viewing: {e}")
 
     async def check_transcodes(self, sessions, activity_channel):
-        """Warn once when TRANSCODE_WARNING streams are transcoding at the same
-        time, and again only after it has dropped below. In the admin channel
-        when there is one (#51)."""
-        transcoding = [s for s in sessions if (s.get('PlayState') or {}).get('PlayMethod') == 'Transcode']
+        """Warn once when TRANSCODE_WARNING streams are re-encoding video at the
+        same time, and again only after it has dropped below. Audio-only and
+        repackaged streams copy the picture and cost little, so they don't count.
+        In the admin channel when there is one (#51)."""
+        transcoding = [s for s in sessions if admin_summary.heavy(s)]
         if len(transcoding) < TRANSCODE_WARNING:
             self.transcode_warned = False
             return
@@ -223,7 +228,7 @@ class Activity(commands.Cog):
             or activity_channel
         embed = discord.Embed(
             title="⚠️ High Transcode Load",
-            description=f"**{len(transcoding)} streams** are being transcoded at once",
+            description=f"**{len(transcoding)} streams** are re-encoding video at once",
             color=discord.Color.orange(),
             timestamp=datetime.now()
         )

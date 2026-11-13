@@ -40,8 +40,13 @@ async def init_database():
         # Why Jellyfin transcoded a play, e.g. "SubtitleCodecNotSupported,AudioCodecNotSupported",
         # for the admin summary (#51). Plays from before 2026-11 have none.
         async with db.execute("PRAGMA table_info(watch_history)") as cursor:
-            if 'transcode_reasons' not in [c[1] for c in await cursor.fetchall()]:
-                await db.execute("ALTER TABLE watch_history ADD COLUMN transcode_reasons TEXT")
+            columns = [c[1] for c in await cursor.fetchall()]
+        if 'transcode_reasons' not in columns:
+            await db.execute("ALTER TABLE watch_history ADD COLUMN transcode_reasons TEXT")
+        # What the transcode did: 'video', 'audio' (only the sound converted) or
+        # 'remux' (both copied). Plays from before 2026-11-13 have none.
+        if 'transcode_kind' not in columns:
+            await db.execute("ALTER TABLE watch_history ADD COLUMN transcode_kind TEXT")
 
         # Subscriptions table
         await db.execute("""
@@ -263,17 +268,20 @@ async def record_watch_start(session_id: str, session: dict):
               season_number, episode_number, datetime.now(), play_method, device_name))
         await db.commit()
 
-async def record_transcode(session_id: str, item_id: str, play_method: str | None, reasons: list[str]):
-    """Note why the open play of this item is transcoded. Jellyfin fills in
+async def record_transcode(session_id: str, item_id: str, play_method: str | None, reasons: list[str],
+                           kind: str | None = None):
+    """Note why the open play of this item is transcoded, and what kind of
+    transcode it is (admin_summary.transcode_kind). Jellyfin fills in
     TranscodingInfo a poll or two after playback starts, and a player can fall
     back to transcoding part way, so this comes after record_watch_start."""
     async with aiosqlite.connect(config.DB_PATH) as db:
         await db.execute("""
-            UPDATE watch_history SET transcode_reasons = ?, play_method = COALESCE(?, play_method)
+            UPDATE watch_history SET transcode_reasons = ?, play_method = COALESCE(?, play_method),
+                   transcode_kind = COALESCE(?, transcode_kind)
             WHERE id = (SELECT id FROM watch_history
                         WHERE session_id = ? AND item_id = ? AND end_time IS NULL
                         ORDER BY start_time DESC LIMIT 1)
-        """, (",".join(reasons), play_method, session_id, item_id))
+        """, (",".join(reasons), play_method, kind, session_id, item_id))
         await db.commit()
 
 
