@@ -181,6 +181,18 @@ async def init_database():
             )
         """)
 
+        # 1-5 popcorn ratings from the recap's buttons (#50): one per member per
+        # night, rating again replaces it
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS movie_night_ratings (
+                event_id TEXT NOT NULL,
+                discord_user_id TEXT NOT NULL,
+                rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+                rated_at TIMESTAMP NOT NULL,
+                PRIMARY KEY (event_id, discord_user_id)
+            )
+        """)
+
         await db.commit()
         print("Database initialized successfully")
 
@@ -548,14 +560,23 @@ async def open_movie_nights() -> list[dict]:
             WHERE status IN ('scheduled', 'live') ORDER BY start_time
         """) as cur:
             rows = await cur.fetchall()
-    nights = []
-    for row in rows:
-        night = dict(zip(NIGHT_FIELDS, row))
-        for key in ("start_time", "end_time", "created_at"):
-            night[key] = datetime.fromisoformat(night[key])
-        night["reminded"] = bool(night["reminded"])
-        nights.append(night)
-    return nights
+    return [_night(row) for row in rows]
+
+
+def _night(row) -> dict:
+    night = dict(zip(NIGHT_FIELDS, row))
+    for key in ("start_time", "end_time", "created_at"):
+        night[key] = datetime.fromisoformat(night[key])
+    night["reminded"] = bool(night["reminded"])
+    return night
+
+
+async def get_movie_night(event_id) -> dict | None:
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute(f"SELECT {', '.join(NIGHT_FIELDS)} FROM movie_nights WHERE event_id = ?",
+                              (str(event_id),)) as cur:
+            row = await cur.fetchone()
+    return _night(row) if row else None
 
 
 async def update_movie_night(event_id, **fields):
@@ -605,6 +626,59 @@ async def movie_nights_attended(discord_ids, db=None) -> int:
         return await count(db)
     async with aiosqlite.connect(config.DB_PATH) as db:
         return await count(db)
+
+
+# --- Movie night ratings and history (#50) ---------------------------------------
+
+async def set_rating(event_id, discord_id: int, rating: int, now: datetime | None = None):
+    """A member's rating for a night; rating again replaces it."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO movie_night_ratings (event_id, discord_user_id, rating, rated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(event_id, discord_user_id) DO UPDATE SET rating = excluded.rating, rated_at = excluded.rated_at
+        """, (str(event_id), str(discord_id), rating, now or datetime.now()))
+        await db.commit()
+
+
+async def night_ratings(event_id) -> dict[int, int]:
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("SELECT discord_user_id, rating FROM movie_night_ratings WHERE event_id = ?",
+                              (str(event_id),)) as cur:
+            return {int(uid): rating for uid, rating in await cur.fetchall()}
+
+
+async def finished_nights(guild_id, limit: int = 10) -> list[dict]:
+    """Recapped nights, newest first: title, film, host, start, how many attended,
+    and the average rating (None without ratings) from how many."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("""
+            SELECT n.event_id, n.title, n.item_id, n.host, n.start_time,
+                (SELECT COUNT(*) FROM movie_night_attendance a
+                 WHERE a.event_id = n.event_id AND a.minutes >= ?),
+                (SELECT AVG(rating) FROM movie_night_ratings r WHERE r.event_id = n.event_id),
+                (SELECT COUNT(*) FROM movie_night_ratings r WHERE r.event_id = n.event_id)
+            FROM movie_nights n WHERE n.guild_id = ? AND n.status = 'done'
+            ORDER BY n.start_time DESC LIMIT ?
+        """, (screenings.ATTEND_MINUTES, str(guild_id), limit)) as cur:
+            rows = await cur.fetchall()
+    keys = ("event_id", "title", "item_id", "host", "start_time", "attended", "average", "votes")
+    nights = [dict(zip(keys, row)) for row in rows]
+    for night in nights:
+        night["start_time"] = datetime.fromisoformat(night["start_time"])
+    return nights
+
+
+async def top_rated_films(guild_id, limit: int = 5) -> list[tuple[str, float, int]]:
+    """(title, average, ratings) for the best-rated films, a film shown twice once."""
+    async with aiosqlite.connect(config.DB_PATH) as db:
+        async with db.execute("""
+            SELECT MAX(n.title), AVG(r.rating) AS average, COUNT(*) AS votes
+            FROM movie_night_ratings r JOIN movie_nights n ON n.event_id = r.event_id
+            WHERE n.guild_id = ? AND n.status = 'done'
+            GROUP BY COALESCE(n.item_id, n.film_name)
+            ORDER BY average DESC, votes DESC, MAX(n.title) LIMIT ?
+        """, (str(guild_id), limit)) as cur:
+            return [tuple(row) for row in await cur.fetchall()]
 
 
 # --- Reading for the achievements card ----------------------------------------

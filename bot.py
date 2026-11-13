@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands
 
 import config
+import ratings
 import watch_data
 from checks import on_app_command_error
 from cogs import movie_night
@@ -18,11 +19,13 @@ EXTENSIONS = [
     "cogs.dashboard",
     "cogs.activity",
     "cogs.digest",
+    "cogs.weekly_new",
     "cogs.server",
     "cogs.subscriptions",
     "cogs.achievements",
     "cogs.movie_night",
     "cogs.spoiler",
+    "cogs.movie_history",
     "cogs.watch",
     "cogs.selftest",
     "cogs.help",
@@ -44,6 +47,8 @@ class EddyFlixBot(commands.Bot):
             await self.load_extension(extension)
         # Re-attach the #roles picker's buttons (flairs, ticket, Jellyfin link), which outlive the process.
         self.add_view(movie_night.RolePicker())
+        # And the 1-5 🍿 rating buttons on movie night recaps, by event id
+        self.add_dynamic_items(ratings.RateButton)
 
     async def on_ready(self):
         self.start_time = datetime.now()
