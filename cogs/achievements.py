@@ -14,6 +14,7 @@ import config
 import tiers
 import watch_data
 from checks import is_owner
+import links
 
 LOCAL = ZoneInfo(os.getenv("TZ", "America/Toronto"))
 STREAK_BADGES = {7: "7-day", 30: "30-day", 100: "100-day"}
@@ -161,27 +162,43 @@ class Achievements(commands.Cog):
     async def link_command(self, interaction: discord.Interaction, jellyfin_user: str,
                            member: discord.Member | None = None):
         target = member or interaction.user
-        if target.id != interaction.user.id and not await is_owner(interaction):
+        owner = await is_owner(interaction)
+        if target.id != interaction.user.id and not owner:
             await interaction.response.send_message("Only the server owner can link someone else.", ephemeral=True)
             return
         try:
             names = await self.bot.jf.get_user_names() if self.bot.jf else []
+            linkable = await self.bot.jf.get_linkable_user_names() if self.bot.jf and not owner else names
         except Exception:
-            names = []
+            names = linkable = []
+        if not names and not owner:
+            await interaction.response.send_message("I can't reach Jellyfin right now. Try again later.", ephemeral=True)
+            return
         match = next((n for n in names if n.lower() == jellyfin_user.strip().lower()), None)
         if names and not match:
             await interaction.response.send_message(f"There is no Jellyfin user called **{jellyfin_user}**.", ephemeral=True)
             return
-        await watch_data.set_link(target.id, match or jellyfin_user.strip())
+        name = match or jellyfin_user.strip()
+        previous = await watch_data.get_link(target.id)
+        problem = links.claim_problem(name, previous, await watch_data.linked_jellyfin_users(), linkable, owner)
+        if problem:
+            await interaction.response.send_message(problem, ephemeral=True)
+            return
+        await watch_data.set_link(target.id, name)
         who = "You are" if target.id == interaction.user.id else f"{target.mention} is"
         await interaction.response.send_message(
-            f"{who} now **{match or jellyfin_user.strip()}** on Jellyfin. `/achievements` and `/streaks` "
+            f"{who} now **{name}** on Jellyfin. `/achievements` and `/streaks` "
             "use it by default.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        await links.announce(self.bot, target, name, previous, "with /link", by=interaction.user)
 
     @link_command.autocomplete("jellyfin_user")
     async def link_user_choices(self, interaction: discord.Interaction, current: str):
         try:
-            names = await self.bot.jf.get_user_names() if self.bot.jf else []
+            # Members only see the accounts they may take; the owner sees all
+            if await is_owner(interaction):
+                names = await self.bot.jf.get_user_names() if self.bot.jf else []
+            else:
+                names = await self.bot.jf.get_linkable_user_names() if self.bot.jf else []
         except Exception:
             return []
         return [app_commands.Choice(name=n, value=n) for n in names if current.lower() in n.lower()][:25]

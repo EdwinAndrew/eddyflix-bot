@@ -320,6 +320,15 @@ class JellyfinClient:
         result = await self._get("/Users")
         return sorted((u.get('Name') for u in result if u.get('Name')), key=str.lower) if isinstance(result, list) else []
 
+    async def get_linkable_user_names(self) -> List[str]:
+        """The users a member may link themselves to: not administrators and not
+        disabled. Hidden ones are fine; that only hides them from the sign-in screen."""
+        result = await self._get("/Users")
+        users = result if isinstance(result, list) else []
+        return sorted((u['Name'] for u in users if u.get('Name')
+                       and not (u.get('Policy') or {}).get('IsAdministrator')
+                       and not (u.get('Policy') or {}).get('IsDisabled')), key=str.lower)
+
     async def get_user_id(self, name: str) -> str | None:
         """The id of the Jellyfin user with this name (any case), or None."""
         result = await self._get("/Users")
