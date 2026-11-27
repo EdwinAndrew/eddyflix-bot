@@ -181,22 +181,39 @@ def playback_section(plays: list[dict]) -> str:
     return clip("\n".join(lines))
 
 
-def library_section(films: list[dict] | None, episodes: list[dict] | None) -> str:
-    """films and episodes added this week, as Jellyfin lists them. None: Jellyfin did not answer."""
+def _film_title(f: dict) -> str:
+    return f"{f.get('Name', '?')} ({f['ProductionYear']})" if f.get('ProductionYear') else f.get('Name', '?')
+
+
+def _by_show(episodes: list[dict]) -> list[str]:
+    shows = Counter(e.get('SeriesName') or 'Unknown show' for e in episodes)
+    return [f"{show} {count}" for show, count in sorted(shows.items(), key=lambda s: (-s[1], s[0]))]
+
+
+def library_section(films: list[dict] | None, episodes: list[dict] | None,
+                    upgraded: set[str] | frozenset = frozenset()) -> str:
+    """films and episodes added this week, as Jellyfin lists them. None: Jellyfin did not answer.
+    upgraded: ids of the ones that replaced a file the library had (library_seen.py),
+    listed on a line of their own rather than as new."""
     if films is None or episodes is None:
         return "Jellyfin did not answer."
     if not films and not episodes:
         return "Nothing added this week."
+    better = [i for i in films + episodes if i.get('Id') in upgraded]
+    films = [f for f in films if f.get('Id') not in upgraded]
+    episodes = [e for e in episodes if e.get('Id') not in upgraded]
     lines = []
     if films:
-        titles = [f"{f.get('Name', '?')} ({f['ProductionYear']})" if f.get('ProductionYear') else f.get('Name', '?')
-                  for f in films]
-        lines.append(f"**{len(films)} film{'s' if len(films) != 1 else ''}:** {names(titles)}")
+        lines.append(f"**{len(films)} film{'s' if len(films) != 1 else ''}:** {names([_film_title(f) for f in films])}")
     if episodes:
-        shows = Counter(e.get('SeriesName') or 'Unknown show' for e in episodes)
-        listed = [f"{show} {count}" for show, count in sorted(shows.items(), key=lambda s: (-s[1], s[0]))]
+        shows = _by_show(episodes)
         lines.append(f"**{len(episodes)} episode{'s' if len(episodes) != 1 else ''}** of "
-                     f"{len(shows)} show{'s' if len(shows) != 1 else ''}: {names(listed)}")
+                     f"{len(shows)} show{'s' if len(shows) != 1 else ''}: {names(shows)}")
+    if better:
+        shown_as_episode = [i for i in better if i.get('Type') == 'Episode' or 'SeriesName' in i]
+        listed = [_film_title(f) for f in better if f not in shown_as_episode] + _by_show(shown_as_episode)
+        lines.append(f"**{len(better)} upgraded file{'s' if len(better) != 1 else ''}** "
+                     f"(better copies, not new): {names(listed)}")
     return clip("\n".join(lines))
 
 

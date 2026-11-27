@@ -113,6 +113,17 @@ def test_database_checks(db_path):
     assert lines(selftest.database_checks())["New-episode poll has run"] == (True, "seen up to 2026-11-12T19:04")
 
 
+def test_database_checks_the_library_record(db_path):
+    check = "Library record for telling upgrades apart"
+    assert lines(selftest.database_checks())[check][0] is None          # not synced yet: skipped, not failed
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO bot_state (key, value) VALUES ('library_seen_until', '2026-11-27T12:00:00.000000+00:00')")
+        db.executemany("INSERT INTO library_seen VALUES (?, ?, '2026-01-01T00:00:00.000000+00:00')",
+                       [("movie:tmdb:1", "movie"), ("episode:tvdb:2:1:1", "episode"), ("episode:tvdb:2:1:2", "episode")])
+    assert lines(selftest.database_checks())[check] == \
+        (True, "1 film and 2 episode identities, synced up to 2026-11-27T12:00")
+
+
 def test_database_missing_is_a_failure(tmp_path):
     assert selftest.database_checks(str(tmp_path / "nope.db")).failed
 

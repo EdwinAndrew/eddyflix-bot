@@ -126,6 +126,20 @@ def test_library_section():
     assert summary.library_section(None, []) == "Jellyfin did not answer."
 
 
+def test_library_section_lists_upgrades_apart():
+    films = [{"Id": "f1", "Name": "Sinners", "ProductionYear": 2025, "Type": "Movie"},
+             {"Id": "f2", "Name": "Dune", "ProductionYear": 2021, "Type": "Movie"}]
+    episodes = ([{"Id": f"inv{n}", "SeriesName": "Invincible", "Type": "Episode"} for n in range(32)]
+                + [{"Id": f"pitt{n}", "SeriesName": "The Pitt", "Type": "Episode"} for n in range(15)])
+    upgraded = {"f2"} | {f"pitt{n}" for n in range(15)}
+    assert summary.library_section(films, episodes, upgraded) == (
+        "**1 film:** Sinners (2025)\n"
+        "**32 episodes** of 1 show: Invincible 32\n"
+        "**16 upgraded files** (better copies, not new): Dune (2021), The Pitt 15")
+    assert summary.library_section(films[1:], episodes[32:], upgraded) == \
+        "**16 upgraded files** (better copies, not new): Dune (2021), The Pitt 15"
+
+
 def test_people_section():
     plays = [play(user="eddy", minutes=120), play(user="Sarah", minutes=30), play(user="eddy", minutes=None)]
     text = summary.people_section(plays, ["Aldrin", "eddy", "Julie", "Sarah"], {"EDDY", "Sarah"})

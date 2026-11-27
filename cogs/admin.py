@@ -16,6 +16,7 @@ from discord.ext import commands, tasks
 
 import admin_summary
 import config
+import library_seen
 from checks import owner_only
 
 SUMMARY_TIME = time(hour=18, minute=0, tzinfo=ZoneInfo(os.getenv("TZ", "America/New_York")))
@@ -61,9 +62,18 @@ class Admin(commands.GroupCog, group_name="admin", group_description="Owner only
         jf = self.bot.jf
         since_utc = datetime.now(timezone.utc) - timedelta(days=7)
         films = episodes = users = system = storage = None
+        upgraded = set()
         if jf is not None:
             films = await self.added_this_week(jf.movies_by_date_added, since_utc)
             episodes = await self.added_this_week(jf.episodes_by_date_added, since_utc)
+            if films is not None and episodes is not None:
+                try:
+                    async with aiosqlite.connect(config.DB_PATH) as db:
+                        await library_seen.sync(db, jf)
+                        upgraded = await library_seen.upgrades(db, jf, films + episodes, since_utc)
+                        await db.commit()
+                except Exception as e:
+                    print(f"Admin summary: could not tell upgrades apart: {e}")
             try:
                 users = await jf.get_user_names()
             except Exception as e:
@@ -84,7 +94,7 @@ class Admin(commands.GroupCog, group_name="admin", group_description="Owner only
         }
         return [
             ("▶️ Playback", admin_summary.playback_section(plays)),
-            ("📚 Library", admin_summary.library_section(films, episodes)),
+            ("📚 Library", admin_summary.library_section(films, episodes, upgraded)),
             ("👥 People", admin_summary.people_section(plays, users, linked)),
             ("🩺 Health", admin_summary.health_section(health, now)),
         ]

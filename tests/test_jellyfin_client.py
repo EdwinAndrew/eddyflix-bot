@@ -53,3 +53,11 @@ def test_next_up_is_per_series_and_includes_half_watched():
 def test_item_carries_user_progress_only_when_asked():
     assert "userId" not in requested(lambda c: c.get_item("abc"))
     assert "userId=u1" in requested(lambda c: c.get_item("abc", "u1"))
+
+
+def test_provider_ids_use_the_list_endpoint_and_the_listings_carry_them():
+    # /Items/{id} answers 400 without a user id.
+    endpoint = requested(lambda c: c.provider_ids(["a", "b"]))
+    assert endpoint.startswith("/Items?Ids=a,b&") and "Fields=ProviderIds" in endpoint
+    assert "ProviderIds" in requested(lambda c: c.added_by_date("Movie"))
+    assert "ProviderIds" in requested(lambda c: c.added_by_date("Series"))
