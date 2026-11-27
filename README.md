@@ -166,6 +166,7 @@ All settings are in [.env.example](.env.example).
 | `catch_up.py` | The 🔔 offer to someone who just caught up on a show: when it counts, the once-per-show record, the persistent button |
 | `new_this_week.py` | The weekly "New on EddyFlix" post: what was added in 7 days, grouped, and its poster grid |
 | `library_seen.py` | Telling an upgraded file from a new film or episode: every film and episode the library has had, by TVDB/TMDB/IMDb id or name plus season and episode number, in the `library_seen` table. Noted in full on the first start, then hourly. Used by New on EddyFlix, the admin summary and the new-episode DMs |
+| `wrapped_stats.py` | EddyFlix Wrapped's numbers (#64): one person's or the whole server's watch time, top shows and films, rewatches, binges, streaks, movie nights, a persona and fun facts for a year or a month, with data-quality guards and a coverage note. Pure, from the database only; not wired to any command yet. `python tests/wrapped_fixtures.py` prints an example as JSON |
 | `household.py` | Watching as a household: who else is linked, `/pick with:` for two, and how many episodes ahead or behind the others are in a show |
 | `ratings.py` | Movie night ratings: who may rate, the persistent 🍿 buttons, the history lines |
 | `tiers.py` | Watch-time tiers and drawing their badges. Art in `assets/`, licences in [assets/LICENSES.md](assets/LICENSES.md) |
@@ -192,7 +193,7 @@ Three layers, from cheapest to the real thing:
    time parsing, the role picker (and its Spoiler Alert lock), the Jellyfin link
    menu and the getting-started guide, `/spoiler` expiry, streaks and achievements against a throwaway database, movie
    night timing and attendance, movie night ratings and history, new-episode batching, the 🔔 catch-up offer (when it is made, once only, the button), Seerr requests (statuses, seasons, one DM per request), the weekly
-   "new this week" grouping and poster grid, telling upgraded files from new ones (`tests/test_library_seen.py`), the feed's viewing posts, the admin summary, `/pick with:` and "episodes ahead of you", the command set, and the Discord calls
+   "new this week" grouping and poster grid, telling upgraded files from new ones (`tests/test_library_seen.py`), the Wrapped stats engine and its timing on 50,000 plays (`tests/test_wrapped_stats.py`), the feed's viewing posts, the admin summary, `/pick with:` and "episodes ahead of you", the command set, and the Discord calls
    against fake objects. `tests/test_recorded_jellyfin.py` runs `/watch` and the new-episode DMs
    against **real Jellyfin responses** in `tests/fixtures/jellyfin/`, recorded from the server
    (trimmed, no user names) by `tests/fixtures/record_jellyfin.py`. Re-record when Jellyfin is
