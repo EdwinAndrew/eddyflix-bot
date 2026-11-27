@@ -1,13 +1,19 @@
 """The weekly "New on EddyFlix" post: Sundays just after the digest, in the same
-channel, or now with /admin weekly-new (owner only). Skipped on a week with nothing new.
-Ends with a line pointing to /request and Seerr, when Seerr is set up."""
+channel, or now with /admin weekly-new (owner only). Skipped on a week with nothing new
+(upgraded files alone are not new). Ends with a line pointing to /request and Seerr,
+when Seerr is set up.
+
+Also keeps the library record that tells upgrades from new things up to date,
+every hour (library_seen.py). The first run notes the whole library."""
 import io
 from datetime import datetime, time, timezone
 
+import aiosqlite
 import discord
 from discord.ext import commands, tasks
 
 import config
+import library_seen
 import new_this_week as nw
 from cogs.digest import DIGEST_TIME
 from cogs.movie_night import TZ, details_link
@@ -22,24 +28,49 @@ class WeeklyNew(commands.Cog):
 
     def cog_unload(self):
         self.weekly.cancel()
+        self.library_sync.cancel()
 
     @commands.Cog.listener()
     async def on_services_ready(self):
         if self.bot.jf and config.ACTIVITY_CHANNEL_ID and not self.weekly.is_running():
             self.weekly.start()
+        if self.bot.jf and not self.library_sync.is_running():
+            self.library_sync.start()
+
+    @tasks.loop(hours=1)
+    async def library_sync(self):
+        """The library record, so a file Sonarr replaces later is known as an upgrade.
+        The first run (right after start) notes the whole library."""
+        try:
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                fresh = await library_seen.sync(db, self.bot.jf)
+            if fresh:
+                print(f"Library record: {fresh} new films or episodes noted")
+        except Exception as e:
+            print(f"Library record: could not sync: {e}")
 
     async def gather(self, now: datetime) -> list[nw.Entry]:
         jf, cut = self.bot.jf, nw.cutoff(now)
         films = await nw.added_since(lambda s, n: jf.added_by_date("Movie", s, n), cut)
         series = await nw.added_since(lambda s, n: jf.added_by_date("Series", s, n), cut)
         episodes = await nw.added_since(jf.episodes_by_date_added, cut)
-        return nw.collect(films, series, episodes)
+        try:
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                await library_seen.sync(db, jf, now)
+                upgraded = await library_seen.upgrades(
+                    db, jf, films + episodes, cut, {s["Id"]: library_seen.series_keys(s) for s in series})
+                await db.commit()
+        except Exception as e:
+            # Better a post that calls an upgrade new than no post
+            print(f"New on EddyFlix: could not tell upgrades apart: {e}")
+            upgraded = set()
+        return nw.collect(films, series, episodes, upgraded)
 
     async def build(self, now: datetime | None = None):
         """(embed, file) for the post, or None when nothing was added."""
         now = now or datetime.now(timezone.utc)
         entries = await self.gather(now)
-        if not entries:
+        if not nw.has_new(entries):
             return None
         start, end = nw.cutoff(now).astimezone(TZ), now.astimezone(TZ)
         shown, _ = nw.tiles(entries)
@@ -66,8 +97,8 @@ class WeeklyNew(commands.Cog):
             return "The activity channel is not set or not found."
         built = await self.build()
         if built is None:
-            print("New on EddyFlix: nothing added this week, not posted")
-            return "Nothing was added in the last 7 days, so nothing was posted."
+            print("New on EddyFlix: nothing new this week, not posted")
+            return "Nothing new was added in the last 7 days (upgraded files don't count), so nothing was posted."
         embed, file = built
         await channel.send(embed=embed, file=file)
         print("New on EddyFlix posted")

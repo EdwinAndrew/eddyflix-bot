@@ -237,7 +237,8 @@ def test_first_run_notes_the_library_and_announces_nothing(db_path):
     poll(make_cog(FakeJellyfin(library), {100: user}, channel), NOW)
     assert user.sent == [] and channel.sent == []
     assert len(sql(db_path, "SELECT * FROM known_episodes")) == 7
-    assert sql(db_path, "SELECT value FROM bot_state") == [(ne.parse_date(stamp(600)).isoformat(),)]
+    assert sql(db_path, "SELECT value FROM bot_state WHERE key = ?", (ne.MARK_KEY,)) == \
+        [(ne.parse_date(stamp(600)).isoformat(),)]
 
 
 def test_new_episodes_are_dmed_once_and_survive_a_restart(db_path):
@@ -305,6 +306,36 @@ def test_shows_nobody_subscribed_to_are_noted_quietly(db_path):
     poll(make_cog(jf, {}, channel), NOW)
     assert channel.sent == []
     assert ("arcane:2:1",) in sql(db_path, "SELECT episode_key FROM known_episodes")
+
+
+def test_an_upgrade_the_library_record_knows_is_not_announced(db_path):
+    # Jellyfin renamed the show since its episodes were noted, so known_episodes
+    # (by name) no longer matches; the library record (by TVDB id) still does.
+    import library_seen
+    sql(db_path, "INSERT INTO subscriptions (discord_user_id, discord_username, show_name, show_id) "
+                 "VALUES ('100', 'eddy', 'Fallout', ?)", (FALLOUT,))
+    user = FakeUser()
+    series = {"Id": FALLOUT, "Name": "Fallout", "ProviderIds": {"Tvdb": "416744"}}
+    jf = FakeJellyfin([ep(n, season=1, minutes_ago=60 * 24 * 30) for n in range(1, 4)])
+    jf.provider_ids = lambda ids: asyncio.sleep(0, [series])
+    jf.added_by_date = lambda kind, start=0, limit=100: asyncio.sleep(0, [series] if kind == "Series" and not start else [])
+    poll(make_cog(jf, {100: user}, FakeChannel()), NOW)
+
+    async def note(db):
+        await library_seen.sync(db, jf, NOW)
+    asyncio.run(_with_db(db_path, note))
+
+    series["Name"] = "Prime Video's Fallout"
+    renamed = [ep(n, season=1, show=series["Name"], item_id=f"bluray-{n}", minutes_ago=30) for n in (1, 2)]
+    jf.episodes = jf.episodes[2:] + renamed + [ep(1, season=2, show=series["Name"], minutes_ago=30)]
+    poll(make_cog(jf, {100: user}, FakeChannel()), NOW)
+    assert len(user.sent) == 1
+    assert user.sent[0]["embed"].title == "📺 A new episode of Prime Video's Fallout"
+
+
+async def _with_db(path, fn):
+    async with aiosqlite.connect(path) as db:
+        await fn(db)
 
 
 def test_polling_stops_paging_at_the_lookback(db_path, monkeypatch):

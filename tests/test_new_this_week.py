@@ -207,3 +207,80 @@ def test_a_long_post_keeps_room_for_the_request_line():
                           datetime(2026, 11, 8), datetime(2026, 11, 15), tail)
     assert len(text) <= nw.DESCRIPTION_LIMIT
     assert text.endswith("more\n\n" + tail)
+
+
+# --- upgrades: better files of what the library had ------------------------------------
+
+def test_upgrades_are_grouped_apart_and_after_everything_new():
+    films = [film("Dune", 1, year=2021), film("Sinners", 2, year=2025)]
+    new = [series("rebuilt", "Rebuilt Show", 1)]
+    episodes = ([ep("pitt", "The Pitt", 1, n) for n in range(1, 16)]
+                + [ep("bear", "The Bear", 4, n) for n in range(1, 5)]
+                + [ep("rebuilt", "Rebuilt Show", 1, n) for n in range(1, 3)])
+    upgraded = ({"film-Dune"} | {f"pitt-1-{n}" for n in range(1, 16)} | {"bear-4-1", "bear-4-2", "bear-4-3"}
+                | {"rebuilt-1-1", "rebuilt-1-2"})
+    entries = nw.collect(films, new, episodes, upgraded)
+    assert [(e.kind, e.name, len(e.episodes), len(e.upgrades)) for e in entries] == [
+        ("film", "Sinners", 0, 0),
+        ("episodes", "The Bear", 1, 3),             # new and upgraded: the new one counts
+        ("upgraded_film", "Dune", 0, 0),
+        ("upgraded_show", "The Pitt", 0, 15),
+        ("upgraded_show", "Rebuilt Show", 0, 2),    # a new series of known episodes is no new show
+    ]
+    assert nw.has_new(entries) and not nw.has_new(entries[2:])
+    assert nw.collect(films, new, episodes) == nw.collect(films, new, episodes, set())
+
+
+def test_upgrade_badges_and_lines():
+    pitt = nw.Entry("upgraded_show", "id-pitt", "The Pitt", upgrades=[ep("p", "The Pitt", 1, n) for n in range(1, 16)])
+    assert nw.caption(pitt) == "+15 upgraded" and nw.second_caption(pitt) is None
+    assert nw.line(pitt, None) == "**The Pitt** · 15 episodes · S01E01–E15"
+    dune = nw.Entry("upgraded_film", "id-dune", "Dune", 2021)
+    assert nw.caption(dune) == "Upgraded" and nw.line(dune, None) == "**Dune (2021)**"
+
+    bear = entry("episodes", "The Bear", 1, season=4)
+    bear.upgrades = [ep("s", "The Bear", 4, n) for n in range(2, 5)]
+    assert nw.caption(bear) == "+1 episode" and nw.second_caption(bear) == "+3 upgraded"
+    assert nw.line(bear, None) == "**The Bear** · 1 new episode · S04E01 · 3 upgraded"
+    assert nw.second_caption(entry("episodes", "Fallout", 2)) is None
+
+
+def test_counts_and_description_with_upgrades():
+    pitt = nw.Entry("upgraded_show", "id-pitt", "The Pitt", upgrades=[ep("p", "The Pitt", 1, n) for n in range(1, 16)])
+    bear = entry("episodes", "The Bear", 1)
+    entries = [entry("film", "Sinners", year=2025), entry("show", "Invincible", 32), bear, pitt]
+    assert nw.counts(entries) == "1 film · 1 new show · new episodes of 1 show · upgrades for 1 show"
+    bear.upgrades = [ep("s", "The Bear", 1, 2)]
+    dune = nw.Entry("upgraded_film", "id-dune", "Dune", 2021)
+    assert nw.counts(entries + [dune]) == \
+        "1 film · 1 new show · new episodes of 1 show · upgrades for 1 film and 2 shows"
+    assert nw.counts([dune, dune]) == "upgrades for 2 films"
+
+    text = nw.description([entry("film", "Sinners"), pitt, dune], lambda i: None,
+                          datetime(2026, 11, 20), datetime(2026, 11, 27))
+    assert text == ("Added Nov 20 – Nov 27\n\n**🎬 New films**\n**Sinners**\n\n"
+                    "**⬆️ Upgraded to a better copy**\n**The Pitt** · 15 episodes · S01E01–E15\n**Dune (2021)**")
+
+
+def test_upgrades_take_at_most_three_posters_and_never_push_out_something_new():
+    new = [entry("film", f"new{n}") for n in range(4)]
+    ups = [nw.Entry("upgraded_film", f"id-up{n}", f"up{n}") for n in range(5)]
+    shown, more = nw.tiles(new + ups, max_tiles=12)
+    assert shown == new + ups[:3] and more == 2
+    shown, more = nw.tiles(new + ups[:3], max_tiles=12)
+    assert shown == new + ups[:3] and more == 0
+    many = [entry("film", f"new{n}") for n in range(12)]
+    shown, more = nw.tiles(many + ups, max_tiles=12)
+    assert shown == many[:11] and more == 1 + 5
+
+
+def test_render_grid_draws_the_blue_badges():
+    pitt = nw.Entry("upgraded_show", "id-pitt", "The Pitt", upgrades=[ep("p", "The Pitt", 1, 1)])
+    bear = entry("episodes", "The Bear", 1)
+    bear.upgrades = [ep("s", "The Bear", 1, 2)]
+    img = Image.open(io.BytesIO(nw.render_grid([bear, pitt], {}, datetime(2026, 11, 20), datetime(2026, 11, 27))))
+    _, _, pos = nw.grid_layout(2)
+    (bx, by), (px, py) = pos
+    assert img.getpixel((bx + 13, by + 29)) == nw.GOLD           # the main badge
+    assert img.getpixel((bx + 13, by + 69)) == nw.BLUE           # "+1 upgraded" under it
+    assert img.getpixel((px + 13, py + 29)) == nw.BLUE

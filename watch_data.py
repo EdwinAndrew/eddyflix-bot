@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import aiosqlite
 
 import config
+import library_seen
 import screenings
 import tiers
 
@@ -76,6 +77,10 @@ async def init_database():
                 episode_key TEXT PRIMARY KEY
             )
         """)
+
+        # Every film and episode seen in the library, by identities that survive
+        # an upgraded file, so the weekly post can tell new from upgraded (library_seen.py)
+        await library_seen.create_tables(db)
 
         # Popular content cache table
         await db.execute("""

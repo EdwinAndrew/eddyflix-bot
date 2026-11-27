@@ -19,6 +19,7 @@ from discord.ext import commands, tasks
 
 import catch_up
 import config
+import library_seen
 import new_episodes
 from cogs.movie_night import JELLYFIN_ID, details_link, film_label
 
@@ -116,7 +117,9 @@ class Subscriptions(commands.Cog):
                 async with db.execute("SELECT id, discord_user_id, show_name, show_id FROM subscriptions") as cursor:
                     rows = await cursor.fetchall()
                 for group in ready:
-                    await self.notify(db, group, rows)
+                    fresh = await self.not_upgrades(db, group)
+                    if fresh:
+                        await self.notify(db, fresh, rows)
                     # Marked per show, so a crash part-way repeats at most one show.
                     await new_episodes.add_known(db, group)
                     await db.commit()
@@ -125,6 +128,23 @@ class Subscriptions(commands.Cog):
             if new_mark and new_mark != mark:
                 await new_episodes.save_mark(db, new_mark)
                 await db.commit()
+
+    async def not_upgrades(self, db, episodes: list[dict]) -> list[dict]:
+        """The episodes that are not a better copy of one the library had already.
+        known_episodes catches most upgrades by show name and number; the library
+        record (library_seen.py) also catches a show renamed in Jellyfin, or an
+        episode first listed without its number. If it cannot tell, all of them."""
+        try:
+            ids = await library_seen.identify(self.bot.jf, episodes)
+            seen = await library_seen.lookup(db, (i for v in ids.values() for i in v))
+        except Exception as e:
+            print(f"Subscriptions: could not check for upgrades: {e}")
+            return episodes
+        fresh = [e for e in episodes if not library_seen.is_replacement(e, ids.get(e.get("Id"), []), seen)]
+        if len(fresh) < len(episodes):
+            print(f"Subscriptions: {len(episodes) - len(fresh)} upgraded episodes of "
+                  f"{episodes[0].get('SeriesName')} not announced")
+        return fresh
 
     async def notify(self, db, episodes: list[dict], rows):
         first = episodes[0]

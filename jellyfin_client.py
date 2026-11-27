@@ -210,13 +210,25 @@ class JellyfinClient:
         return result if isinstance(result, list) else []
 
     async def added_by_date(self, item_type: str, start: int = 0, limit: int = 100) -> List[dict]:
-        """One page of films or series, newest DateCreated first, for the weekly
-        "New on EddyFlix" post. Like episodes, the caller pages until it is past
-        the date it wants."""
+        """One page of films or series, newest DateCreated first, with their
+        provider ids, for the weekly "New on EddyFlix" post and the library record
+        (library_seen.py). Like episodes, the caller pages until it is past the
+        date it wants."""
         endpoint = (f"/Items?IncludeItemTypes={item_type}&Recursive=true&SortBy=DateCreated"
                     f"&SortOrder=Descending&StartIndex={start}&Limit={limit}"
-                    f"&Fields=DateCreated,ProductionYear&EnableImages=false&EnableUserData=false"
+                    f"&Fields=DateCreated,ProductionYear,ProviderIds&EnableImages=false&EnableUserData=false"
                     f"&{FILMS_NOT_COLLECTIONS}")
+        result = await self._get(endpoint)
+        return result.get('Items', []) if isinstance(result, dict) else []
+
+    async def provider_ids(self, item_ids: list[str]) -> List[dict]:
+        """These items with their TVDB/TMDB/IMDb ids, name and year, for telling
+        an upgraded file from a new one (library_seen.py). /Items?Ids=, since
+        /Items/{id} answers 400 without a user id."""
+        if not item_ids:
+            return []
+        endpoint = (f"/Items?Ids={','.join(item_ids)}&Fields=ProviderIds,ProductionYear"
+                    f"&EnableImages=false&EnableUserData=false")
         result = await self._get(endpoint)
         return result.get('Items', []) if isinstance(result, dict) else []
 

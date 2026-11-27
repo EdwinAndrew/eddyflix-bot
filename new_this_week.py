@@ -4,13 +4,20 @@ New films, new shows, and shows with new episodes grouped into one line each,
 with a poster grid drawn here and uploaded (Jellyfin's public address answers
 Canada only, so Discord cannot fetch posters from it).
 
+Sonarr and Radarr replace files with better ones, which Jellyfin lists as newly
+added. Those upgrades (library_seen.py tells them apart) get a blue "Upgraded"
+badge and a section of their own, after everything new, and are not counted as
+new films or episodes. A show with new and upgraded episodes shows the new ones,
+with the upgrades on a second, smaller badge. A week with only upgrades is not
+posted.
+
 Jellyfin 12 ignores MinDateCreated on /Items, so added_since pages newest first
 and stops once it is past the cutoff. Everything else here is pure, for the tests.
 """
 import io
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
@@ -23,24 +30,37 @@ MAX_PAGES = 50          # 5,000 items: a rebuilt library should not page forever
 MAX_TILES = 12          # posters in the grid; past that the last tile says "+N more"
 MAX_COLS = 6
 MIN_COLS = 3            # the canvas is never narrower than this, so the heading fits
+MAX_UPGRADE_TILES = 3   # upgrades come after everything new, and take at most this many posters
 MAX_RANGE = 30          # longer episode ranges are left out of the line
 DESCRIPTION_LIMIT = 3900
 
 COLOUR = 0xF4C430
 
 
+NEW_KINDS = ("film", "show", "episodes")
+UPGRADE_KINDS = ("upgraded_film", "upgraded_show")
+
+
 @dataclass
 class Entry:
-    kind: str                   # "film", "show" (new this week) or "episodes" (new episodes of an older show)
+    # "film", "show" (new this week) or "episodes" (new episodes of an older show);
+    # "upgraded_film" or "upgraded_show" when all it got this week was better files
+    kind: str
     item_id: str                # the film or the series: poster and link
     name: str
     year: int | None = None
     added: datetime | None = None
-    episodes: list = field(default_factory=list)
+    episodes: list = field(default_factory=list)    # new episodes
+    upgrades: list = field(default_factory=list)    # upgraded episodes
 
     @property
     def count(self) -> int:
-        return len(self.episodes)
+        """New episodes, or for a show with only upgrades, upgraded ones."""
+        return len(self.upgrades) if self.kind == "upgraded_show" else len(self.episodes)
+
+    @property
+    def new(self) -> bool:
+        return self.kind in NEW_KINDS
 
     @property
     def label(self) -> str:
@@ -76,17 +96,22 @@ async def added_since(fetch, cut: datetime, page: int = PAGE) -> list[dict]:
 
 # --- grouping -------------------------------------------------------------------
 
-def collect(films: list[dict], series: list[dict], episodes: list[dict]) -> list[Entry]:
-    """Films, new shows and shows with new episodes, in that order. All three
-    lists hold only what was added in the window.
+def collect(films: list[dict], series: list[dict], episodes: list[dict],
+            upgraded: set[str] | frozenset = frozenset()) -> list[Entry]:
+    """Films, new shows, shows with new episodes, then upgrades: upgraded films,
+    and shows that only got upgraded episodes. All three lists hold only what
+    was added in the window; upgraded has the ids of films and episodes that
+    are better copies of ones the library had before it (library_seen.upgrades).
 
-    A show is new when its series was added in the window. A new series with no
-    episodes yet (still downloading) is left out.
+    A show is new when its series was added in the window and it has a new
+    episode. A new series with no episodes yet (still downloading) is left out.
     """
-    entries = [Entry("film", f["Id"], f.get("Name") or "Unknown", f.get("ProductionYear"),
-                     parse_date(f.get("DateCreated")))
-               for f in films if f.get("LocationType") != "Virtual"]
-    entries.sort(key=lambda e: e.added, reverse=True)
+    films = [f for f in films if f.get("LocationType") != "Virtual"]
+    entries = [Entry("upgraded_film" if f["Id"] in upgraded else "film", f["Id"], f.get("Name") or "Unknown",
+                     f.get("ProductionYear"), parse_date(f.get("DateCreated")))
+               for f in films]
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    entries.sort(key=lambda e: e.added or oldest, reverse=True)
 
     new_series = {s["Id"]: s for s in series}
     shows: dict[str, Entry] = {}
@@ -104,13 +129,25 @@ def collect(films: list[dict], series: list[dict], episodes: list[dict]) -> list
             info = new_series.get(series_id, {})
             shows[group] = Entry("show" if info else "episodes", series_id or "", ep.get("SeriesName") or "Unknown",
                                  info.get("ProductionYear"), parse_date(info.get("DateCreated")))
-        shows[group].episodes.append(ep)
+        (shows[group].upgrades if ep.get("Id") in upgraded else shows[group].episodes).append(ep)
+    for show in shows.values():
+        if not show.episodes:
+            show.kind = "upgraded_show"
 
     def most_first(e: Entry):
         return (-e.count, normalize(e.name))
-    entries += sorted((e for e in shows.values() if e.kind == "show"), key=most_first)
-    entries += sorted((e for e in shows.values() if e.kind == "episodes"), key=most_first)
-    return entries
+    new_films = [e for e in entries if e.kind == "film"]
+    upgraded_films = [e for e in entries if e.kind == "upgraded_film"]
+    return (new_films
+            + sorted((e for e in shows.values() if e.kind == "show"), key=most_first)
+            + sorted((e for e in shows.values() if e.kind == "episodes"), key=most_first)
+            + upgraded_films
+            + sorted((e for e in shows.values() if e.kind == "upgraded_show"), key=most_first))
+
+
+def has_new(entries: list[Entry]) -> bool:
+    """Whether there is anything new at all: a week of upgrades only is not posted."""
+    return any(e.new for e in entries)
 
 
 def plural(n: int, word: str) -> str:
@@ -123,22 +160,39 @@ def caption(entry: Entry) -> str:
         return "New film"
     if entry.kind == "show":
         return "New show"
+    if entry.kind == "upgraded_film":
+        return "Upgraded"
+    if entry.kind == "upgraded_show":
+        return f"+{entry.count} upgraded"
     return f"+{plural(entry.count, 'episode')}"
+
+
+def second_caption(entry: Entry) -> str | None:
+    """The smaller badge under it, for a show with new and upgraded episodes."""
+    return f"+{len(entry.upgrades)} upgraded" if entry.new and entry.upgrades else None
+
+
+def _with_range(text: str, episodes: list) -> str:
+    codes = episode_range(episodes)
+    return f"{text} · {codes}" if codes and len(codes) <= MAX_RANGE else text
 
 
 def line(entry: Entry, link: str | None) -> str:
     """One line of the post: "[The Bear](…) · 10 new episodes · S04E01–E10"."""
     name = f"[{entry.label}]({link})" if link else f"**{entry.label}**"
-    if entry.kind == "film":
+    if entry.kind in ("film", "upgraded_film"):
         return name
+    if entry.kind == "upgraded_show":
+        return _with_range(f"{name} · {plural(entry.count, 'episode')}", entry.upgrades)
     if entry.kind == "show":
-        return f"{name} · {plural(entry.count, 'episode')}"
-    text = f"{name} · {entry.count} new episode{'' if entry.count == 1 else 's'}"
-    codes = episode_range(entry.episodes)
-    return f"{text} · {codes}" if codes and len(codes) <= MAX_RANGE else text
+        text = f"{name} · {plural(entry.count, 'episode')}"
+    else:
+        text = _with_range(f"{name} · {entry.count} new episode{'' if entry.count == 1 else 's'}", entry.episodes)
+    return f"{text} · {len(entry.upgrades)} upgraded" if entry.upgrades else text
 
 
-SECTIONS = [("film", "🎬 New films"), ("show", "📺 New shows"), ("episodes", "➕ New episodes")]
+SECTIONS = [(("film",), "🎬 New films"), (("show",), "📺 New shows"), (("episodes",), "➕ New episodes"),
+            (UPGRADE_KINDS, "⬆️ Upgraded to a better copy")]
 
 
 def request_line(command_on: bool, seerr_url: str) -> str | None:
@@ -161,8 +215,8 @@ def description(entries: list[Entry], link_for, start: datetime, end: datetime, 
     end_with = [f"\n{tail}"] if tail else []
     out = [f"Added {start:%b} {start.day} – {end:%b} {end.day}"]
     shown = 0
-    for kind, heading in SECTIONS:
-        group = [e for e in entries if e.kind == kind]
+    for kinds, heading in SECTIONS:
+        group = [e for e in entries if e.kind in kinds]
         if not group:
             continue
         out.append(f"\n**{heading}**")
@@ -178,8 +232,10 @@ def description(entries: list[Entry], link_for, start: datetime, end: datetime, 
 
 
 def counts(entries: list[Entry]) -> str:
-    """"1 film · 2 new shows · new episodes of 3 shows"."""
-    n = {kind: sum(1 for e in entries if e.kind == kind) for kind, _ in SECTIONS}
+    """"1 film · 2 new shows · new episodes of 3 shows · upgrades for 1 show".
+    Upgrades count apart: a show with new and upgraded episodes is in both."""
+    n = {kind: sum(1 for e in entries if e.kind == kind) for kind in NEW_KINDS + UPGRADE_KINDS}
+    upgraded_shows = n["upgraded_show"] + sum(1 for e in entries if e.new and e.upgrades)
     bits = []
     if n["film"]:
         bits.append(plural(n["film"], "film"))
@@ -187,6 +243,9 @@ def counts(entries: list[Entry]) -> str:
         bits.append(plural(n["show"], "new show"))
     if n["episodes"]:
         bits.append(f"new episodes of {plural(n['episodes'], 'show')}")
+    upgraded = [plural(c, w) for c, w in ((n["upgraded_film"], "film"), (upgraded_shows, "show")) if c]
+    if upgraded:
+        bits.append(f"upgrades for {' and '.join(upgraded)}")
     return " · ".join(bits)
 
 
@@ -203,15 +262,21 @@ TILE_BG = (38, 41, 49)
 TEXT = (240, 240, 240)
 MUTED = (150, 155, 165)
 GOLD = (244, 196, 48)
-BADGE_COLOURS = {"film": (231, 76, 60), "show": (46, 204, 113), "episodes": GOLD}
+BLUE = (77, 166, 255)
+BADGE_COLOURS = {"film": (231, 76, 60), "show": (46, 204, 113), "episodes": GOLD,
+                 "upgraded_film": BLUE, "upgraded_show": BLUE}
 
 
-def tiles(entries: list[Entry], max_tiles: int = MAX_TILES) -> tuple[list[Entry], int]:
-    """The entries that get a poster, and how many more there are. With too many,
-    the last tile is given to "+N more"."""
-    if len(entries) <= max_tiles:
+def tiles(entries: list[Entry], max_tiles: int = MAX_TILES,
+          max_upgrades: int = MAX_UPGRADE_TILES) -> tuple[list[Entry], int]:
+    """The entries that get a poster, and how many more there are. Upgrades come
+    last and get at most max_upgrades posters. With too many, the last tile is
+    given to "+N more"."""
+    candidates = [e for e in entries if e.new] + [e for e in entries if not e.new][:max_upgrades]
+    if len(candidates) == len(entries) and len(entries) <= max_tiles:
         return entries, 0
-    return entries[:max_tiles - 1], len(entries) - (max_tiles - 1)
+    shown = candidates[:max_tiles - 1]
+    return shown, len(entries) - len(shown)
 
 
 def grid_layout(n: int, max_cols: int = MAX_COLS, min_cols: int = MIN_COLS):
@@ -290,7 +355,7 @@ def render_grid(entries: list[Entry], posters: dict[str, bytes | None], start: d
                       width - 2 * PAD, 34)
     draw.text((PAD, PAD + 70), text, font=font, fill=MUTED)
 
-    badge_font = _font(30)
+    badge_font, small_font = _font(30), _font(24)
     for entry, (x, y) in zip(shown, positions):
         img.paste(_poster(posters.get(entry.item_id), entry.name), (x, y))
         text = caption(entry).upper()
@@ -298,6 +363,11 @@ def render_grid(entries: list[Entry], posters: dict[str, bytes | None], start: d
         colour = BADGE_COLOURS[entry.kind]
         draw.rounded_rectangle((x + 10, y + 10, x + 10 + w, y + 48), radius=8, fill=colour)
         draw.text((x + 20, y + 29), text, font=badge_font, fill=BG, anchor="lm")
+        if extra := second_caption(entry):
+            text = extra.upper()
+            w = int(small_font.getlength(text)) + 16
+            draw.rounded_rectangle((x + 10, y + 54, x + 10 + w, y + 84), radius=7, fill=BLUE)
+            draw.text((x + 18, y + 69), text, font=small_font, fill=BG, anchor="lm")
         font, title = _fit(entry.name.upper(), POSTER_W, 40)
         draw.text((x + POSTER_W // 2, y + POSTER_H + 10), title, font=font, fill=TEXT, anchor="mt")
     if more:

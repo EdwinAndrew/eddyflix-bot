@@ -14,12 +14,13 @@ import sys
 from dataclasses import dataclass, field
 
 import config
+import library_seen
 import new_episodes
 from cogs.movie_night import film_label
 from cogs.watch import clock, episode_label
 
 TABLES = ("watch_history", "user_links", "subscriptions", "movie_nights",
-          "movie_night_attendance", "bot_state", "known_episodes", "subscription_offers")
+          "movie_night_attendance", "bot_state", "known_episodes", "subscription_offers", "library_seen")
 
 
 @dataclass
@@ -150,6 +151,16 @@ def database_checks(path: str | None = None, findings: Findings | None = None) -
             row = db.execute("SELECT value FROM bot_state WHERE key = ?", (new_episodes.MARK_KEY,)).fetchone() \
                 if "bot_state" in have else None
             f.add("New-episode poll has run", bool(row), f"seen up to {row[0][:16]}" if row else "no mark yet")
+            mark = db.execute("SELECT value FROM bot_state WHERE key = ?", (library_seen.MARK_KEY,)).fetchone() \
+                if "bot_state" in have else None
+            if mark and "library_seen" in have:
+                kinds = dict(db.execute("SELECT kind, COUNT(*) FROM library_seen GROUP BY kind").fetchall())
+                f.add("Library record for telling upgrades apart", True,
+                      f"{kinds.get('movie', 0)} film and {kinds.get('episode', 0)} episode identities, "
+                      f"synced up to {mark[0][:16]}")
+            else:
+                f.add("Library record for telling upgrades apart", None,
+                      "not synced yet: the first start notes the whole library, give it a minute")
     except Exception as e:
         f.add("Database tables", False, str(e))
     return f
