@@ -353,3 +353,58 @@ def test_full_year_on_a_large_database_is_fast(tmp_path):
     assert server.server.watchers == 7 and heavy.eligible
     assert took < 5 and heavy_took < 5
     db.close()
+
+
+# --- conversion ------------------------------------------------------------------
+
+def _period(p):
+    return ws._period(ws.local(p[0]), ws.local(p[1]))
+
+
+def _keys(hours, period=YEAR, server=False):
+    return [c.key for c in ws._conversions(round(hours * 3600), _period(period), server)]
+
+
+def test_conversion_maths():
+    by = {c.key: c for c in ws._conversions(100 * 3600, _period(YEAR), False)}
+    assert by["film_reel"].value == 164.6                  # 90 ft a minute: 6,000 min x 27.432 m
+    assert "165 km of 35mm film this year" in by["film_reel"].text
+    assert by["vhs"].value == 50 and "1.2 m" in by["vhs"].text
+    assert by["frames"].value == 8_640_000 and "8.6 million" in by["frames"].text
+    assert by["flights"].value == 20.7                     # 4 h 50 m each
+    assert by["lotr"].value == 8.8                         # 11 h 22 m each
+    assert by["waking"].value == 58                        # 365 x 16 h / 100 h
+    assert ws.conversion(0, "Harper", _period(YEAR)) is None
+
+
+def test_conversion_options_follow_the_total():
+    assert _keys(2) == ["film_reel", "frames"]             # one tape, 1 in 2,920 waking hours
+    assert _keys(4) == ["film_reel", "vhs", "frames"]      # no whole flight yet
+    assert _keys(12) == ["film_reel", "vhs", "frames", "flights", "lotr"]
+    assert "waking" in _keys(100) and "waking" in _keys(3000)
+    assert _keys(10_000) == ["film_reel", "vhs", "frames", "flights", "lotr"]   # over half of waking hours
+
+
+def test_conversion_film_reel_distances():
+    def text(hours):
+        return ws._conversions(round(hours * 3600), _period(YEAR), True)[0].text
+    assert text(2).endswith("5% of the drive from Toronto to Hamilton.")
+    assert text(330).endswith("about the drive from Toronto to Montréal.")      # 543 km
+    assert text(641).endswith("farther than the drive from Toronto to Québec City.")
+    assert text(10_000).endswith("3.7 times the drive from Toronto to Vancouver.")
+
+
+def test_conversion_server_is_the_film_reel(conn):
+    s = stats(conn, None)
+    assert s.conversion.key == "film_reel" and s.conversion.text.startswith("EddyFlix played ")
+    assert _keys(500, server=True) == ["film_reel"]
+
+
+def test_conversion_is_stable_per_person_and_period(conn):
+    s = stats(conn, "Harper")
+    options = ws._conversions(s.watch_time.total_seconds, s.period, False)
+    assert s.conversion in options
+    assert stats(conn, "HARPER").conversion == s.conversion
+    picks = {ws.conversion(500 * 3600, name, _period(YEAR)).key for name in map(str, range(40))}
+    assert len(picks) >= 4                                 # people get different ones
+    assert all(stats(conn, u).conversion is not None for u in ("Harper", "quinn", "Rowan"))

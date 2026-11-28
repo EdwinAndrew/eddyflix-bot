@@ -37,13 +37,16 @@ From plays to watch time, in order:
    A viewing counts at most the runtime. Viewings are "plays" in the top films
    and in most rewatched; stopping and resuming the next day is one play.
 
-Every other stat is defined where it is computed below.
+Every other stat is defined where it is computed below; conversion() turns the
+watch time into one picture (film reel, VHS stack, flights...) per card.
 
 Genres: not available. watch_history does not record them and the engine makes
 no Jellyfin calls. TODO(#65): add top genres once genres are stored, e.g. from
 NowPlayingItem.Genres in watch_data.record_watch_start.
 """
 import asyncio
+import hashlib
+import math
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, is_dataclass
@@ -207,6 +210,14 @@ class FunFact:
 
 
 @dataclass(frozen=True)
+class Conversion:
+    """Watch time turned into something you can picture (see conversion())."""
+    key: str             # "film_reel", "vhs", "frames", "flights", "lotr", "waking"
+    text: str
+    value: int | float   # the converted number: km, tapes, frames, times, or 1-in-N hours
+
+
+@dataclass(frozen=True)
 class Coverage:
     first_day: date | None   # first and last day with counted plays in the period
     last_day: date | None
@@ -249,6 +260,7 @@ class WrappedStats:
     movie_nights: MovieNights
     persona: Persona | None       # None for the server, and without plays
     fun_facts: list[FunFact]
+    conversion: Conversion | None  # None without plays
     coverage: Coverage
     server: ServerExtras | None = None
 
@@ -925,6 +937,105 @@ def fun_facts(stats: dict, server: bool, period: Period) -> list[FunFact]:
     return picked
 
 
+
+# --- conversion --------------------------------------------------------------------------
+
+# 35 mm film runs at 24 frames a second with 16 frames to the foot: 90 ft a minute.
+FILM_KM_PER_SECOND = 90 * 0.3048 / 60 / 1000
+VHS_HOURS = 2                        # a T-120 tape at standard play
+VHS_THICKNESS_M = 0.025              # a VHS cassette is about 2.5 cm thick
+DOORWAY_M = 2.03
+STOREY_M = 3.0
+FLIGHT_SECONDS = (4 * 60 + 50) * 60  # Toronto to Vancouver, about 4 h 50 m
+LOTR_SECONDS = (208 + 223 + 251) * 60  # the extended trilogy, 11 h 22 m
+WAKING_HOURS_PER_DAY = 16
+WAKING_MAX_ONE_IN = 100        # "1 in every 2,920 hours" is not a picture
+# Rough driving distances from Toronto, shortest first.
+DRIVES = ((70, "Hamilton"), (130, "Niagara Falls"), (260, "Kingston"), (450, "Ottawa"),
+          (540, "Montréal"), (800, "Québec City"), (1400, "Thunder Bay"), (1800, "Halifax"),
+          (2100, "Winnipeg"), (3400, "Calgary"), (4400, "Vancouver"))
+
+
+def _times(n: float) -> str:
+    """3 → "3", 2.5 → "2.5", 14.2 → "14", 1234 → "1,234"."""
+    return f"{n:,.0f}" if n >= 10 or n == round(n) else f"{n:.1f}"
+
+
+def _km(km: float) -> str:
+    return f"{km:.1f} km" if km < 10 else f"{km:,.0f} km"
+
+
+def _drive(km: float) -> str:
+    """The film length next to a drive from Toronto: the nearest by ratio."""
+    longest, where = DRIVES[-1]
+    if km >= 1.5 * longest:
+        return f"{_times(km / longest)} times the drive from Toronto to {where}"
+    if km < 0.75 * DRIVES[0][0]:
+        return f"{round(100 * km / DRIVES[0][0])}% of the drive from Toronto to {DRIVES[0][1]}"
+    dist, where = min(DRIVES, key=lambda d: abs(math.log(km / d[0])))
+    if 0.8 <= km / dist <= 1.25:
+        return f"about the drive from Toronto to {where}"
+    return f"{'farther than' if km > dist else 'most of'} the drive from Toronto to {where}"
+
+
+def _conversions(seconds: int, period: Period, server: bool) -> list[Conversion]:
+    """Every conversion that reads well for this much watch time, in a fixed order."""
+    when = {"year": "this year", "month": "this month"}.get(period.kind, "in this period")
+    hours = seconds / 3600
+    km = seconds * FILM_KM_PER_SECOND
+    who = "EddyFlix played" if server else "You watched"
+    out = [Conversion("film_reel", f"{who} {_km(km)} of 35mm film {when}: {_drive(km)}.",
+                      round(km, 1))]
+    if server:
+        return out
+    tapes = math.ceil(hours / VHS_HOURS)
+    if tapes >= 2:
+        stack = tapes * VHS_THICKNESS_M
+        tall = (f"{stack * 100:.0f} cm" if stack < 1 else f"{stack:.1f} m" if stack < 10
+                else f"{stack:,.0f} m")
+        storeys = round(stack / STOREY_M)
+        size = (f", about {storeys} storeys high" if storeys >= 2
+                else ", taller than a doorway" if stack > DOORWAY_M else "")
+        out.append(Conversion("vhs", f"On VHS that's {tapes:,} tapes, a stack {tall} tall{size}.",
+                              tapes))
+    frames = seconds * 24
+    shown = f"{frames / 1e6:.1f} million" if frames >= 1e6 else f"{frames:,}"
+    out.append(Conversion("frames", f"That's {shown} frames, 24 every second.", frames))
+    flights = seconds / FLIGHT_SECONDS
+    if flights >= 1:
+        out.append(Conversion("flights", f"Long enough to fly Toronto to Vancouver {_times(flights)} "
+                              f"time{'s' * (_times(flights) != '1')}.", round(flights, 1)))
+    trilogies = seconds / LOTR_SECONDS
+    if trilogies >= 1:
+        out.append(Conversion("lotr", f"Long enough for the extended Lord of the Rings trilogy "
+                              f"{_times(trilogies)} time{'s' * (_times(trilogies) != '1')}.",
+                              round(trilogies, 1)))
+    waking = (period.end - period.start).days * WAKING_HOURS_PER_DAY
+    one_in = round(waking / hours)
+    if 2 <= one_in <= WAKING_MAX_ONE_IN:
+        out.append(Conversion("waking", f"About 1 in every {one_in:,} of your waking hours {when}.",
+                              one_in))
+    return out
+
+
+def conversion(seconds: int, user: str | None, period: Period) -> Conversion | None:
+    """One picture of the watch time, beside the fun facts rather than ranked
+    against them (an always-available big number would win every time).
+
+    The server always gets the film reel. A person gets one of the conversions
+    that read well for their total (flights and the trilogy from one whole
+    time, VHS from two tapes, "1 in N waking hours" for N from 2 to 100),
+    chosen by a hash of their name and the period: stable for the same card,
+    different between people and between periods. Distances are rough driving
+    distances from Toronto, and 35 mm film is 90 feet a minute."""
+    if not seconds:
+        return None
+    options = _conversions(seconds, period, user is None)
+    if user is None:
+        return options[0]
+    digest = hashlib.sha256(f"{name_key(user)}|{period.label}".encode()).digest()
+    return options[int.from_bytes(digest[:8], "big") % len(options)]
+
 def _latest_start(sessions) -> _Session | None:
     """The session starting latest into the night, midnight to 5 AM."""
     small = [s for s in sessions if s.start.hour < 5]
@@ -1005,6 +1116,7 @@ async def wrapped_stats(db, user: str | None, start: date | datetime, end: date 
         eligible=stats["watch_time"].total_seconds >= min_hours * 3600, min_hours=min_hours,
         persona=None if server else persona(stats | extra),
         fun_facts=fun_facts(stats | extra, server, period),
+        conversion=conversion(stats["watch_time"].total_seconds, user, period),
         coverage=coverage(sessions, start, end, excluded),
         server=ServerExtras(
             watchers=len({s.user for s in sessions}), library_added_films=added_films,
